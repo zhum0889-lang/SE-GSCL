@@ -92,3 +92,27 @@ results/cloud_p1/cwru4_d0_d1_qwen7b_seed*/
 ```
 
 当前脚本用于验证两工况 P1 闭环。完整四工况、多种子和基线消融需要后续的顺序实验 runner，不能将当前 Smoke 数值直接作为论文结果。
+
+## 6. 四工况快速对比
+
+依次运行顺序微调、平衡回放和完整方法：
+
+```bash
+bash scripts/run_cloud_p1_sequence.sh
+```
+
+默认每个策略执行 10 个初始化 epoch 和每个新工况 10 个持续 epoch。
+快速连通性检查可以缩短为：
+
+```bash
+INITIAL_EPOCHS=3 CONTINUAL_EPOCHS=3 \
+bash scripts/run_cloud_p1_sequence.sh
+```
+
+完成后终端会打印并保存：
+
+```text
+results/cloud_p1_sequence/<run_id>/comparison.json
+```
+
+将该 JSON 返回即可继续分析。单种子快速对比仍不是论文正式结果。

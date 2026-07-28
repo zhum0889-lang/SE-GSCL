@@ -1,8 +1,9 @@
-"""Run a two-domain P1 global-semantic continual-learning experiment."""
+"""Run ordered P1 global-semantic continual learning over two or more domains."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 import random
@@ -23,7 +24,11 @@ from experiments.continual_fdllm.domain_windows import (  # noqa: E402
     build_protocol_splits,
     fit_normalization,
 )
-from se_gscl.continual import ClassDomainBatchSampler, GlobalRelationSnapshot  # noqa: E402
+from se_gscl.continual import (  # noqa: E402
+    ClassDomainBatchSampler,
+    GlobalRelationSnapshot,
+    summarize_accuracy_matrix,
+)
 from se_gscl.losses import global_prototype_alignment_loss, snapshot_probabilities  # noqa: E402
 from se_gscl.models import SEGSCLSpecialist  # noqa: E402
 from se_gscl.semantics import (  # noqa: E402
@@ -84,6 +89,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--dataset", default="cwru4")
     parser.add_argument("--domains", default="0,1")
+    parser.add_argument(
+        "--strategy",
+        choices=("sequential", "balanced_replay", "full"),
+        default="full",
+    )
     parser.add_argument("--window-size", type=int, default=1024)
     parser.add_argument("--step-size", type=int, default=1024)
     parser.add_argument("--max-windows-per-file", type=int, default=24)
@@ -108,6 +118,8 @@ def _set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 def _as_window_dataset(dataset: dict[str, object]) -> WindowDataset:
@@ -175,12 +187,118 @@ def _select_replay_indices(labels: np.ndarray, per_class: int, seed: int) -> np.
     return np.asarray(sorted(selected), dtype=np.int64)
 
 
+def _balanced_loader(
+    dataset: WindowDataset,
+    batch_size: int,
+    seed: int,
+) -> DataLoader:
+    labels = dataset.labels.numpy()
+    class_counts = np.bincount(labels)
+    sample_weights = 1.0 / class_counts[labels]
+    sampler = WeightedRandomSampler(
+        torch.as_tensor(sample_weights, dtype=torch.double),
+        num_samples=len(dataset),
+        replacement=True,
+        generator=torch.Generator().manual_seed(seed),
+    )
+    return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+
+
+def _concatenate_datasets(*datasets: WindowDataset) -> WindowDataset:
+    if not datasets:
+        raise ValueError("At least one WindowDataset is required.")
+    return WindowDataset(
+        torch.cat([dataset.x for dataset in datasets]).numpy(),
+        torch.cat([dataset.labels for dataset in datasets]).numpy(),
+        torch.cat([dataset.domains for dataset in datasets]).numpy(),
+        torch.cat([dataset.sample_ids for dataset in datasets]).numpy(),
+    )
+
+
+def _select_balanced_memory(
+    candidates: WindowDataset,
+    per_class: int,
+    seed: int,
+) -> WindowDataset:
+    """Keep fixed per-class capacity while covering every seen domain."""
+
+    rng = np.random.default_rng(seed)
+    labels = candidates.labels.numpy()
+    domains = candidates.domains.numpy()
+    selected: list[int] = []
+    for label in sorted(np.unique(labels).tolist()):
+        class_indices = np.flatnonzero(labels == label)
+        class_domains = sorted(np.unique(domains[class_indices]).tolist())
+        base = per_class // len(class_domains)
+        extra = per_class % len(class_domains)
+        class_selected: list[int] = []
+        for position, domain in enumerate(class_domains):
+            domain_indices = class_indices[domains[class_indices] == domain]
+            rng.shuffle(domain_indices)
+            quota = base + int(position < extra)
+            class_selected.extend(domain_indices[:quota].tolist())
+        if len(class_selected) < per_class:
+            remaining = class_indices[
+                ~np.isin(class_indices, np.asarray(class_selected, dtype=np.int64))
+            ]
+            rng.shuffle(remaining)
+            class_selected.extend(remaining[: per_class - len(class_selected)].tolist())
+        selected.extend(class_selected[:per_class])
+    selected_array = np.asarray(sorted(selected), dtype=np.int64)
+    return WindowDataset(
+        candidates.x[selected_array].numpy(),
+        candidates.labels[selected_array].numpy(),
+        candidates.domains[selected_array].numpy(),
+        candidates.sample_ids[selected_array].numpy(),
+    )
+
+
+def _evaluate_all_domains(
+    model: SEGSCLSpecialist,
+    prototypes: torch.Tensor,
+    test_sets: dict[int, WindowDataset],
+    domains: list[int],
+    device: torch.device,
+    batch_size: int,
+) -> dict[str, dict[str, object]]:
+    return {
+        str(domain): _accuracy(
+            model,
+            prototypes,
+            test_sets[domain],
+            device,
+            batch_size,
+        )
+        for domain in domains
+    }
+
+
+def _write_matrix_csv(
+    path: Path,
+    matrix: np.ndarray,
+    domains: list[int],
+    *,
+    seen_only: bool,
+) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["stage"] + [f"domain_{domain}" for domain in domains])
+        for stage_index, row in enumerate(matrix):
+            values: list[str | float] = []
+            for domain_index, value in enumerate(row):
+                if seen_only and domain_index > stage_index:
+                    values.append("")
+                else:
+                    values.append(float(value))
+            writer.writerow([f"after_domain_{domains[stage_index]}"] + values)
+
+
 def main() -> int:
     args = parse_args()
     _set_seed(args.seed)
     domains = [int(value) for value in args.domains.split(",") if value.strip()]
-    if len(domains) != 2:
-        raise ValueError("P1 smoke currently expects exactly two ordered domains.")
+    if len(domains) < 2:
+        raise ValueError("P1 continual learning requires at least two domains.")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
@@ -242,130 +360,227 @@ def main() -> int:
         lr=args.learning_rate,
     )
     history: list[dict[str, float | int | str]] = []
-    initial_labels = initial_train.labels.numpy()
-    class_counts = np.bincount(initial_labels, minlength=len(class_names))
-    sample_weights = 1.0 / class_counts[initial_labels]
-    initial_sampler = WeightedRandomSampler(
-        torch.as_tensor(sample_weights, dtype=torch.double),
-        num_samples=len(initial_train),
-        replacement=True,
-        generator=torch.Generator().manual_seed(args.seed),
-    )
-    initial_loader = DataLoader(
+    initial_loader = _balanced_loader(
         initial_train,
-        batch_size=args.batch_size,
-        sampler=initial_sampler,
+        args.batch_size,
+        args.seed,
     )
     for epoch in range(args.initial_epochs):
         metrics = initial_trainer.train_epoch(initial_loader, initial_optimizer)
-        history.append({"stage": "initial", "epoch": epoch, **metrics})
+        history.append(
+            {
+                "stage": "initial",
+                "stage_index": 0,
+                "domain": domains[0],
+                "epoch": epoch,
+                **metrics,
+            }
+        )
 
     frozen_bank = projected_bank.freeze("p1-after-initial-domain").to(device)
     torch.save(frozen_bank.state_dict(), output_dir / "frozen_prototypes.pt")
-    initial_metrics = {
-        str(domain): _accuracy(
-            model,
-            frozen_bank.prototypes,
-            _as_window_dataset(test_by_domain[domain]),
-            device,
-            args.batch_size,
-        )
-        for domain in domains
-    }
-    replay_indices = _select_replay_indices(
-        initial_train.labels.numpy(),
-        args.replay_per_class,
-        args.seed,
-    )
-    replay = WindowDataset(
-        initial_train.x[replay_indices].numpy(),
-        initial_train.labels[replay_indices].numpy(),
-        initial_train.domains[replay_indices].numpy(),
-        initial_train.sample_ids[replay_indices].numpy(),
-    )
-    _, old_probs = _predict(
-        model,
-        frozen_bank.prototypes,
-        replay,
-        device,
-        args.batch_size,
-    )
-    snapshot = GlobalRelationSnapshot(
-        replay.sample_ids,
-        torch.from_numpy(old_probs),
-        version="before-domain-1",
-    )
-    snapshot.save(output_dir / "global_relation_snapshot.npz")
-
-    current = _as_window_dataset(train_by_domain[domains[1]])
-    combined_x = torch.cat([current.x, replay.x]).numpy()
-    combined_labels = torch.cat([current.labels, replay.labels]).numpy()
-    combined_domains = torch.cat([current.domains, replay.domains]).numpy()
-    combined_ids = torch.cat([current.sample_ids, replay.sample_ids]).numpy()
-    is_replay = np.concatenate(
-        [
-            np.zeros(len(current), dtype=bool),
-            np.ones(len(replay), dtype=bool),
-        ]
-    )
-    snapshot_rows = np.full(
-        (len(current) + len(replay), len(class_names)),
-        1.0 / len(class_names),
-        dtype=np.float32,
-    )
-    snapshot_rows[len(current) :] = old_probs
-    continual_train = WindowDataset(
-        combined_x,
-        combined_labels,
-        combined_domains,
-        combined_ids,
-        snapshot_probs=snapshot_rows,
-        is_replay=is_replay,
-    )
-    batch_sampler = ClassDomainBatchSampler(
-        combined_labels,
-        combined_domains,
-        args.batch_size,
-        seed=args.seed,
-    )
-    continual_loader = DataLoader(continual_train, batch_sampler=batch_sampler)
-    continual_trainer = GlobalSemanticTrainer(
-        model,
-        frozen_bank.prototypes,
-        P1LossWeights(
-            global_alignment=1.0,
-            cross_condition=args.lambda_cc,
-            decorrelation=args.lambda_dec,
-            global_relation=args.lambda_rel,
-        ),
-        device=device,
-    )
-    continual_optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.learning_rate,
-    )
-    for epoch in range(args.continual_epochs):
-        batch_sampler.set_epoch(epoch)
-        metrics = continual_trainer.train_epoch(
-            continual_loader,
-            continual_optimizer,
-        )
-        history.append({"stage": "continual", "epoch": epoch, **metrics})
-
     test_sets = {
         domain: _as_window_dataset(dataset)
         for domain, dataset in test_by_domain.items()
     }
-    final_metrics = {
-        str(domain): _accuracy(
+    initial_metrics = _evaluate_all_domains(
+        model,
+        frozen_bank.prototypes,
+        test_sets,
+        domains,
+        device,
+        args.batch_size,
+    )
+    stage_metrics: list[dict[str, object]] = [
+        {
+            "stage_index": 0,
+            "trained_domain": domains[0],
+            "domain_metrics": initial_metrics,
+        }
+    ]
+    torch.save(model.state_dict(), output_dir / f"specialist_after_domain_{domains[0]}.pt")
+
+    memory = _select_balanced_memory(
+        initial_train,
+        args.replay_per_class,
+        args.seed,
+    ) if args.strategy != "sequential" else None
+
+    for stage_index, domain in enumerate(domains[1:], start=1):
+        current = _as_window_dataset(train_by_domain[domain])
+        relation_enabled = args.strategy == "full"
+        if args.strategy == "sequential":
+            continual_train = current
+            continual_loader = _balanced_loader(
+                continual_train,
+                args.batch_size,
+                args.seed + stage_index,
+            )
+            batch_sampler = None
+        else:
+            if memory is None:
+                raise RuntimeError("Replay strategy requires initialized memory.")
+            combined_x = torch.cat([current.x, memory.x]).numpy()
+            combined_labels = torch.cat([current.labels, memory.labels]).numpy()
+            combined_domains = torch.cat([current.domains, memory.domains]).numpy()
+            combined_ids = torch.cat([current.sample_ids, memory.sample_ids]).numpy()
+            if relation_enabled:
+                _, old_probs = _predict(
+                    model,
+                    frozen_bank.prototypes,
+                    memory,
+                    device,
+                    args.batch_size,
+                )
+                snapshot = GlobalRelationSnapshot(
+                    memory.sample_ids,
+                    torch.from_numpy(old_probs),
+                    version=f"before-domain-{domain}",
+                )
+                snapshot.save(
+                    output_dir / f"global_relation_snapshot_before_{domain}.npz"
+                )
+                snapshot_rows = np.full(
+                    (len(current) + len(memory), len(class_names)),
+                    1.0 / len(class_names),
+                    dtype=np.float32,
+                )
+                snapshot_rows[len(current) :] = old_probs
+                is_replay = np.concatenate(
+                    [
+                        np.zeros(len(current), dtype=bool),
+                        np.ones(len(memory), dtype=bool),
+                    ]
+                )
+                continual_train = WindowDataset(
+                    combined_x,
+                    combined_labels,
+                    combined_domains,
+                    combined_ids,
+                    snapshot_probs=snapshot_rows,
+                    is_replay=is_replay,
+                )
+            else:
+                continual_train = WindowDataset(
+                    combined_x,
+                    combined_labels,
+                    combined_domains,
+                    combined_ids,
+                )
+            batch_sampler = ClassDomainBatchSampler(
+                combined_labels,
+                combined_domains,
+                args.batch_size,
+                seed=args.seed + stage_index * 100,
+            )
+            continual_loader = DataLoader(
+                continual_train,
+                batch_sampler=batch_sampler,
+            )
+
+        continual_trainer = GlobalSemanticTrainer(
             model,
             frozen_bank.prototypes,
-            test_sets[domain],
+            P1LossWeights(
+                global_alignment=1.0,
+                cross_condition=args.lambda_cc if relation_enabled else 0.0,
+                decorrelation=args.lambda_dec,
+                global_relation=args.lambda_rel if relation_enabled else 0.0,
+            ),
+            device=device,
+        )
+        continual_optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=args.learning_rate,
+        )
+        for epoch in range(args.continual_epochs):
+            if batch_sampler is not None:
+                batch_sampler.set_epoch(epoch)
+            metrics = continual_trainer.train_epoch(
+                continual_loader,
+                continual_optimizer,
+            )
+            history.append(
+                {
+                    "stage": "continual",
+                    "stage_index": stage_index,
+                    "domain": domain,
+                    "epoch": epoch,
+                    **metrics,
+                }
+            )
+
+        torch.save(
+            model.state_dict(),
+            output_dir / f"specialist_after_domain_{domain}.pt",
+        )
+        domain_metrics = _evaluate_all_domains(
+            model,
+            frozen_bank.prototypes,
+            test_sets,
+            domains,
             device,
             args.batch_size,
         )
-        for domain in domains
+        stage_metrics.append(
+            {
+                "stage_index": stage_index,
+                "trained_domain": domain,
+                "domain_metrics": domain_metrics,
+            }
+        )
+        if memory is not None:
+            memory_candidates = _concatenate_datasets(memory, current)
+            memory = _select_balanced_memory(
+                memory_candidates,
+                args.replay_per_class,
+                args.seed + stage_index * 1009,
+            )
+
+    final_metrics = stage_metrics[-1]["domain_metrics"]
+    accuracy_matrix = np.asarray(
+        [
+            [
+                row["domain_metrics"][str(domain)]["accuracy"]
+                for domain in domains
+            ]
+            for row in stage_metrics
+        ],
+        dtype=np.float64,
+    )
+    balanced_matrix = np.asarray(
+        [
+            [
+                row["domain_metrics"][str(domain)]["balanced_accuracy"]
+                for domain in domains
+            ]
+            for row in stage_metrics
+        ],
+        dtype=np.float64,
+    )
+    sequence_summary = {
+        "accuracy": summarize_accuracy_matrix(accuracy_matrix),
+        "balanced_accuracy": summarize_accuracy_matrix(balanced_matrix),
     }
+    _write_matrix_csv(
+        output_dir / "accuracy_matrix_full.csv",
+        accuracy_matrix,
+        domains,
+        seen_only=False,
+    )
+    _write_matrix_csv(
+        output_dir / "accuracy_matrix_seen_only.csv",
+        accuracy_matrix,
+        domains,
+        seen_only=True,
+    )
+    _write_matrix_csv(
+        output_dir / "balanced_accuracy_matrix_seen_only.csv",
+        balanced_matrix,
+        domains,
+        seen_only=True,
+    )
+
     old_domain = str(domains[0])
     forgetting = {
         "accuracy": float(
@@ -380,6 +595,7 @@ def main() -> int:
     report = {
         "status": "ok",
         "dataset": args.dataset,
+        "strategy": args.strategy,
         "domains": domains,
         "class_names": class_names,
         "text_model": text_cache.model_id,
@@ -388,7 +604,10 @@ def main() -> int:
         "text_centering": "ontology_global_mean",
         "semantic_dim": args.semantic_dim,
         "normalization": stats.to_dict(),
-        "replay_samples": len(replay),
+        "memory_capacity_per_class": args.replay_per_class
+        if memory is not None
+        else 0,
+        "replay_samples": len(memory) if memory is not None else 0,
         "initial_stage_metrics": initial_metrics,
         "final_stage_metrics": final_metrics,
         "old_domain_forgetting": forgetting,
@@ -396,8 +615,10 @@ def main() -> int:
             domain: values["accuracy"]
             for domain, values in final_metrics.items()
         },
+        "stage_metrics": stage_metrics,
+        "sequence_summary": sequence_summary,
         "history": history,
-        "note": "Smoke result for pipeline validation; not a paper benchmark.",
+        "note": "Sequence result requires multi-seed baseline comparison before paper use.",
     }
     (output_dir / "p1_report.json").write_text(
         json.dumps(report, indent=2),

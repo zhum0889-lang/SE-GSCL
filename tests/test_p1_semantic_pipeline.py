@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from se_gscl.continual import ClassDomainBatchSampler, GlobalRelationSnapshot  # noqa: E402
+from se_gscl.continual import (  # noqa: E402
+    ClassDomainBatchSampler,
+    GlobalRelationSnapshot,
+    summarize_accuracy_matrix,
+)
 from se_gscl.losses import (  # noqa: E402
     global_relation_snapshot_loss,
     snapshot_probabilities,
@@ -114,6 +118,23 @@ class P1SemanticPipelineTests(unittest.TestCase):
         rows, mask = restored.lookup(torch.tensor([9, 10, 12]))
         self.assertEqual(mask.tolist(), [False, True, True])
         torch.testing.assert_close(rows, snapshot.probabilities)
+
+    def test_sequence_metrics_use_only_seen_stage_history(self) -> None:
+        matrix = np.asarray(
+            [
+                [0.80, 0.40, 0.30],
+                [0.70, 0.90, 0.35],
+                [0.75, 0.85, 0.95],
+            ]
+        )
+        summary = summarize_accuracy_matrix(matrix)
+        self.assertAlmostEqual(summary["final_average_accuracy"], 0.85)
+        self.assertAlmostEqual(summary["average_forgetting"], 0.05)
+        self.assertAlmostEqual(summary["average_backward_transfer"], -0.05)
+        np.testing.assert_allclose(
+            summary["stage_seen_average"],
+            [0.80, 0.80, 0.85],
+        )
 
 
 if __name__ == "__main__":
