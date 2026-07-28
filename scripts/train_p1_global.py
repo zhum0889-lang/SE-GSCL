@@ -10,7 +10,7 @@ import sys
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 ROOT = Path(__file__).resolve().parents[1]
 for path in (ROOT / "src", ROOT):
@@ -151,9 +151,18 @@ def _accuracy(
     dataset: WindowDataset,
     device: torch.device,
     batch_size: int,
-) -> float:
+) -> dict[str, object]:
     predictions, _ = _predict(model, prototypes, dataset, device, batch_size)
-    return float(np.mean(predictions == dataset.labels.numpy()))
+    labels = dataset.labels.numpy()
+    per_class = {
+        str(label): float(np.mean(predictions[labels == label] == label))
+        for label in sorted(np.unique(labels).tolist())
+    }
+    return {
+        "accuracy": float(np.mean(predictions == labels)),
+        "balanced_accuracy": float(np.mean(list(per_class.values()))),
+        "per_class_accuracy": per_class,
+    }
 
 
 def _select_replay_indices(labels: np.ndarray, per_class: int, seed: int) -> np.ndarray:
@@ -233,10 +242,19 @@ def main() -> int:
         lr=args.learning_rate,
     )
     history: list[dict[str, float | int | str]] = []
+    initial_labels = initial_train.labels.numpy()
+    class_counts = np.bincount(initial_labels, minlength=len(class_names))
+    sample_weights = 1.0 / class_counts[initial_labels]
+    initial_sampler = WeightedRandomSampler(
+        torch.as_tensor(sample_weights, dtype=torch.double),
+        num_samples=len(initial_train),
+        replacement=True,
+        generator=torch.Generator().manual_seed(args.seed),
+    )
     initial_loader = DataLoader(
         initial_train,
         batch_size=args.batch_size,
-        shuffle=True,
+        sampler=initial_sampler,
     )
     for epoch in range(args.initial_epochs):
         metrics = initial_trainer.train_epoch(initial_loader, initial_optimizer)
@@ -244,6 +262,16 @@ def main() -> int:
 
     frozen_bank = projected_bank.freeze("p1-after-initial-domain").to(device)
     torch.save(frozen_bank.state_dict(), output_dir / "frozen_prototypes.pt")
+    initial_metrics = {
+        str(domain): _accuracy(
+            model,
+            frozen_bank.prototypes,
+            _as_window_dataset(test_by_domain[domain]),
+            device,
+            args.batch_size,
+        )
+        for domain in domains
+    }
     replay_indices = _select_replay_indices(
         initial_train.labels.numpy(),
         args.replay_per_class,
@@ -328,7 +356,7 @@ def main() -> int:
         domain: _as_window_dataset(dataset)
         for domain, dataset in test_by_domain.items()
     }
-    accuracies = {
+    final_metrics = {
         str(domain): _accuracy(
             model,
             frozen_bank.prototypes,
@@ -337,6 +365,17 @@ def main() -> int:
             args.batch_size,
         )
         for domain in domains
+    }
+    old_domain = str(domains[0])
+    forgetting = {
+        "accuracy": float(
+            initial_metrics[old_domain]["accuracy"]
+            - final_metrics[old_domain]["accuracy"]
+        ),
+        "balanced_accuracy": float(
+            initial_metrics[old_domain]["balanced_accuracy"]
+            - final_metrics[old_domain]["balanced_accuracy"]
+        ),
     }
     report = {
         "status": "ok",
@@ -350,7 +389,13 @@ def main() -> int:
         "semantic_dim": args.semantic_dim,
         "normalization": stats.to_dict(),
         "replay_samples": len(replay),
-        "accuracies": accuracies,
+        "initial_stage_metrics": initial_metrics,
+        "final_stage_metrics": final_metrics,
+        "old_domain_forgetting": forgetting,
+        "accuracies": {
+            domain: values["accuracy"]
+            for domain, values in final_metrics.items()
+        },
         "history": history,
         "note": "Smoke result for pipeline validation; not a paper benchmark.",
     }

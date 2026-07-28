@@ -66,17 +66,27 @@ class P1SemanticPipelineTests(unittest.TestCase):
         self.assertFalse(frozen.prototypes.requires_grad)
 
     def test_balanced_sampler_constructs_cross_domain_pairs(self) -> None:
-        labels = np.asarray([0, 0, 0, 0, 1, 1, 1, 1])
-        domains = np.asarray([0, 0, 1, 1, 0, 0, 1, 1])
-        sampler = ClassDomainBatchSampler(labels, domains, batch_size=4, seed=7)
+        labels = np.asarray([0] * 4 + [1] * 8 + [2] * 12 + [3] * 16)
+        domains = np.asarray(
+            [0, 0, 1, 1]
+            + [0] * 4
+            + [1] * 4
+            + [0] * 6
+            + [1] * 6
+            + [0] * 8
+            + [1] * 8
+        )
+        sampler = ClassDomainBatchSampler(labels, domains, batch_size=16, seed=7)
         for batch in sampler:
             batch_labels = labels[batch]
             batch_domains = domains[batch]
-            has_pair = any(
-                len(np.unique(batch_domains[batch_labels == label])) >= 2
-                for label in np.unique(batch_labels)
-            )
-            self.assertTrue(has_pair)
+            counts = [int(np.sum(batch_labels == label)) for label in range(4)]
+            self.assertLessEqual(max(counts) - min(counts), 1)
+            for label in range(4):
+                self.assertGreaterEqual(
+                    len(np.unique(batch_domains[batch_labels == label])),
+                    2,
+                )
 
     def test_relation_snapshot_loss_only_uses_replay_rows(self) -> None:
         old_logits = torch.tensor([[2.0, 0.0], [0.0, 2.0]])

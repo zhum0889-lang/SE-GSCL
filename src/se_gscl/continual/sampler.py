@@ -64,44 +64,34 @@ class ClassDomainBatchSampler(Sampler[list[int]]):
     def __iter__(self) -> Iterator[list[int]]:
         rng = np.random.default_rng(self.seed + self.epoch)
         viable_labels = np.asarray(sorted(self.domains_by_class), dtype=np.int64)
-        all_indices = np.arange(len(self.labels), dtype=np.int64)
         for _ in range(len(self)):
             selected: list[int] = []
-            used: set[int] = set()
-            label_order = rng.permutation(viable_labels)
-            label_cursor = 0
-            while len(selected) + 2 <= self.batch_size:
-                label = int(label_order[label_cursor % len(label_order)])
-                label_cursor += 1
+            active_count = min(len(viable_labels), self.batch_size // 2)
+            active_labels = rng.permutation(viable_labels)[:active_count]
+            base_quota = self.batch_size // active_count
+            extra = self.batch_size % active_count
+            for position, raw_label in enumerate(active_labels):
+                label = int(raw_label)
+                quota = base_quota + int(position < extra)
                 domain_pair = rng.choice(
                     np.asarray(self.domains_by_class[label], dtype=np.int64),
                     size=2,
                     replace=False,
                 )
-                pair: list[int] = []
+                class_selected: list[int] = []
                 for domain in domain_pair:
                     candidates = self.groups[(label, int(domain))]
-                    unused = candidates[
-                        np.asarray([int(index) not in used for index in candidates])
+                    class_selected.append(int(rng.choice(candidates)))
+                class_pool = np.flatnonzero(self.labels == label)
+                remaining = quota - len(class_selected)
+                if remaining > 0:
+                    unused = class_pool[
+                        ~np.isin(class_pool, np.asarray(class_selected, dtype=np.int64))
                     ]
-                    source = unused if len(unused) else candidates
-                    pair.append(int(rng.choice(source)))
-                for index in pair:
-                    if index not in used:
-                        selected.append(index)
-                        used.add(index)
-                if label_cursor >= len(label_order) and len(selected) >= 2:
-                    break
-
-            fill_pool = all_indices[
-                np.asarray([int(index) not in used for index in all_indices])
-            ]
-            rng.shuffle(fill_pool)
-            selected.extend(
-                int(index)
-                for index in fill_pool[: self.batch_size - len(selected)]
-            )
-            if len(selected) < self.batch_size and self.drop_last:
-                continue
+                    replace = len(unused) < remaining
+                    source = unused if len(unused) else class_pool
+                    drawn = rng.choice(source, size=remaining, replace=replace)
+                    class_selected.extend(int(index) for index in drawn)
+                selected.extend(class_selected)
             rng.shuffle(selected)
             yield selected

@@ -56,7 +56,15 @@ def cross_condition_supervised_contrastive_loss(
     if not torch.any(valid):
         return fault_embeddings.sum() * 0.0
 
-    denominator_logits = similarities.masked_fill(eye, float("-inf"))
+    # Same-class samples from the same domain are neither the intended
+    # cross-domain positives nor semantic negatives. Excluding them avoids
+    # contradictory gradients that pull and push the same fault class.
+    negative_mask = labels.view(-1, 1).ne(labels.view(1, -1))
+    denominator_mask = (positive_mask | negative_mask) & ~eye
+    denominator_logits = similarities.masked_fill(
+        ~denominator_mask,
+        float("-inf"),
+    )
     log_denominator = torch.logsumexp(denominator_logits, dim=1, keepdim=True)
     log_probabilities = similarities - log_denominator
     positive_counts = positive_mask.sum(dim=1).clamp_min(1)

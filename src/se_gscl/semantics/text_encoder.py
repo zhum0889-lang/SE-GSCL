@@ -43,6 +43,7 @@ class FrozenDecoderTextEncoder:
         trust_remote_code: bool = False,
     ) -> None:
         try:
+            import transformers
             from transformers import AutoModel, AutoTokenizer
         except ImportError as exc:
             raise RuntimeError(
@@ -66,7 +67,9 @@ class FrozenDecoderTextEncoder:
             "trust_remote_code": trust_remote_code,
         }
         if self.device.type == "cuda":
-            model_kwargs["torch_dtype"] = self.dtype
+            transformers_major = int(transformers.__version__.split(".", maxsplit=1)[0])
+            dtype_key = "dtype" if transformers_major >= 5 else "torch_dtype"
+            model_kwargs[dtype_key] = self.dtype
         self.model = AutoModel.from_pretrained(model_name_or_path, **model_kwargs)
         self.model.to(self.device)
         self.model.eval()

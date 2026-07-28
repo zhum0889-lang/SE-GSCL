@@ -18,6 +18,19 @@ export TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
+if ! "$PYTHON_BIN" - <<'PY'
+import numpy
+import scipy
+import sklearn
+import torch
+import transformers
+PY
+then
+  echo "Required Python packages are missing." >&2
+  echo "Run: pip install -r requirements.txt" >&2
+  exit 4
+fi
+
 if [[ ! -d "$CWRU_ROOT" ]]; then
   echo "CWRU directory not found: $CWRU_ROOT" >&2
   exit 2
@@ -59,7 +72,10 @@ PY
 fi
 
 echo "[1/4] Running unit tests"
-"$PYTHON_BIN" -m unittest discover -s tests -v
+if ! "$PYTHON_BIN" -m unittest discover -s tests -v; then
+  echo "Unit tests failed; cloud smoke has been stopped." >&2
+  exit 5
+fi
 
 echo "[2/4] Auditing CWRU records"
 "$PYTHON_BIN" scripts/prepare_dataset.py \
