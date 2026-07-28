@@ -23,6 +23,7 @@ if ! "$PYTHON_BIN" - <<'PY'
 import numpy
 import scipy
 import sklearn
+import matplotlib
 import torch
 import transformers
 PY
@@ -102,4 +103,8 @@ for strategy in "${STRATEGY_LIST[@]}"; do
 done
 
 "$PYTHON_BIN" scripts/summarize_p1_sequence.py --root "$RUN_ROOT"
+"$PYTHON_BIN" scripts/visualize_p1_results.py \
+  --root "$RUN_ROOT" \
+  --class-names "Normal,InnerRace,Ball,OuterRace"
 echo "RETURN THIS FILE: $ROOT/$RUN_ROOT/comparison.json"
+echo "FIGURES: $ROOT/$RUN_ROOT/figures"

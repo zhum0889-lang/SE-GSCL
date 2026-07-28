@@ -132,16 +132,17 @@ def _as_window_dataset(dataset: dict[str, object]) -> WindowDataset:
 
 
 @torch.inference_mode()
-def _predict(
+def _collect_outputs(
     model: SEGSCLSpecialist,
     prototypes: torch.Tensor,
     dataset: WindowDataset,
     device: torch.device,
     batch_size: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
     predictions: list[torch.Tensor] = []
     probabilities: list[torch.Tensor] = []
+    embeddings: list[torch.Tensor] = []
     for batch in DataLoader(dataset, batch_size=batch_size, shuffle=False):
         output = model(batch["x"].to(device))
         _, logits = global_prototype_alignment_loss(
@@ -151,9 +152,76 @@ def _predict(
         )
         predictions.append(logits.argmax(dim=1).cpu())
         probabilities.append(snapshot_probabilities(logits).cpu())
+        embeddings.append(output.fault_embedding.cpu())
     return (
         torch.cat(predictions).numpy(),
         torch.cat(probabilities).numpy(),
+        torch.cat(embeddings).numpy(),
+    )
+
+
+def _predict(
+    model: SEGSCLSpecialist,
+    prototypes: torch.Tensor,
+    dataset: WindowDataset,
+    device: torch.device,
+    batch_size: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    predictions, probabilities, _ = _collect_outputs(
+        model,
+        prototypes,
+        dataset,
+        device,
+        batch_size,
+    )
+    return predictions, probabilities
+
+
+def _save_stage_outputs(
+    output_dir: Path,
+    trained_domain: int,
+    model: SEGSCLSpecialist,
+    prototypes: torch.Tensor,
+    test_sets: dict[int, WindowDataset],
+    domains: list[int],
+    class_names: tuple[str, ...],
+    device: torch.device,
+    batch_size: int,
+) -> None:
+    """Persist sample-level outputs needed for paper-facing diagnostics."""
+
+    predictions: list[np.ndarray] = []
+    probabilities: list[np.ndarray] = []
+    embeddings: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+    sample_ids: list[np.ndarray] = []
+    sample_domains: list[np.ndarray] = []
+    for domain in domains:
+        dataset = test_sets[domain]
+        pred, prob, embedding = _collect_outputs(
+            model,
+            prototypes,
+            dataset,
+            device,
+            batch_size,
+        )
+        predictions.append(pred)
+        probabilities.append(prob)
+        embeddings.append(embedding)
+        labels.append(dataset.labels.numpy())
+        sample_ids.append(dataset.sample_ids.numpy())
+        sample_domains.append(dataset.domains.numpy())
+    np.savez_compressed(
+        output_dir / f"stage_outputs_after_domain_{trained_domain}.npz",
+        predictions=np.concatenate(predictions),
+        probabilities=np.concatenate(probabilities),
+        embeddings=np.concatenate(embeddings),
+        labels=np.concatenate(labels),
+        sample_ids=np.concatenate(sample_ids),
+        domains=np.concatenate(sample_domains),
+        prototypes=prototypes.detach().cpu().numpy(),
+        class_names=np.asarray(class_names, dtype="U"),
+        trained_domain=np.asarray([trained_domain], dtype=np.int64),
     )
 
 
@@ -398,6 +466,17 @@ def main() -> int:
             "domain_metrics": initial_metrics,
         }
     ]
+    _save_stage_outputs(
+        output_dir,
+        domains[0],
+        model,
+        frozen_bank.prototypes,
+        test_sets,
+        domains,
+        class_names,
+        device,
+        args.batch_size,
+    )
     torch.save(model.state_dict(), output_dir / f"specialist_after_domain_{domains[0]}.pt")
 
     memory = _select_balanced_memory(
@@ -529,6 +608,17 @@ def main() -> int:
                 "domain_metrics": domain_metrics,
             }
         )
+        _save_stage_outputs(
+            output_dir,
+            domain,
+            model,
+            frozen_bank.prototypes,
+            test_sets,
+            domains,
+            class_names,
+            device,
+            args.batch_size,
+        )
         if memory is not None:
             memory_candidates = _concatenate_datasets(memory, current)
             memory = _select_balanced_memory(
@@ -603,6 +693,22 @@ def main() -> int:
         "text_pooling": text_cache.pooling,
         "text_centering": "ontology_global_mean",
         "semantic_dim": args.semantic_dim,
+        "diagnostic_output": {
+            "type": "semantic_prototype_classification",
+            "producer": "lightweight_specialist",
+            "decision_rule": "argmax cosine similarity to frozen text prototypes",
+            "llm_text_generation_enabled": False,
+        },
+        "training_config": {
+            "initial_epochs": args.initial_epochs,
+            "continual_epochs": args.continual_epochs,
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "lambda_cross_condition": args.lambda_cc,
+            "lambda_decorrelation": args.lambda_dec,
+            "lambda_global_relation": args.lambda_rel,
+            "seed": args.seed,
+        },
         "normalization": stats.to_dict(),
         "memory_capacity_per_class": args.replay_per_class
         if memory is not None

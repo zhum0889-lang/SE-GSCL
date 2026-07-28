@@ -6,3 +6,4 @@ tqdm>=4.64
 gdown>=5.2,<6
 transformers>=4.45
 safetensors>=0.4
+matplotlib>=3.7

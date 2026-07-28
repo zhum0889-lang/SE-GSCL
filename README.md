@@ -219,3 +219,23 @@ results/p0_smoke/20260720_203101
 
 It used two domains, one seed, one training epoch, and 96 samples per split.
 Its scores are only a pipeline check, not a paper result.
+
+## P1 result visualization
+
+The four-condition sequence runner now generates paper-facing PNG and vector
+PDF figures automatically. Existing sequence results can be visualized without
+retraining:
+
+```bash
+python scripts/visualize_p1_results.py \
+  --root results/cloud_p1_sequence/<run_id> \
+  --class-names Normal,InnerRace,Ball,OuterRace
+```
+
+Reports that predate sample-level output export produce strategy summaries,
+stage curves, domain comparisons, class-recall heatmaps, accuracy matrices, and
+loss curves. New runs also save `stage_outputs_after_domain_*.npz` and add
+normalized confusion matrices, specialist-confidence diagnostics, and joint
+t-SNE plots of signal embeddings and frozen text prototypes. These are P1
+semantic-prototype classifier results; generative LLM diagnosis is not yet
+enabled.
