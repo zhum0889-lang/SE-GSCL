@@ -5,6 +5,7 @@ from .alignment import (
     cross_covariance_loss,
     global_prototype_alignment_loss,
 )
+from .local_alignment import local_symptom_alignment_loss
 from .relation import global_relation_snapshot_loss, snapshot_probabilities
 
 __all__ = [
@@ -12,5 +13,6 @@ __all__ = [
     "cross_covariance_loss",
     "global_prototype_alignment_loss",
     "global_relation_snapshot_loss",
+    "local_symptom_alignment_loss",
     "snapshot_probabilities",
 ]

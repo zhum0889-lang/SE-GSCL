@@ -239,3 +239,41 @@ normalized confusion matrices, specialist-confidence diagnostics, and joint
 t-SNE plots of signal embeddings and frozen text prototypes. These are P1
 semantic-prototype classifier results; generative LLM diagnosis is not yet
 enabled.
+
+## P2 local symptom semantics
+
+P2 adds hierarchical physical evidence without updating Qwen. The ontology now
+separates global fault identity from local symptoms such as periodic impacts,
+characteristic-frequency harmonics, rotational sidebands, and resonance
+bursts. A shared frozen Qwen text projector maps both levels into the P1
+semantic space.
+
+First create a P2-ready P1 checkpoint. The current P1 runner saves
+`projected_text_bank.pt` in addition to the frozen class prototypes:
+
+```bash
+STRATEGIES=full bash scripts/run_cloud_p1_sequence.sh
+```
+
+Then run the local symptom probe:
+
+```bash
+bash scripts/run_cloud_p2_local.sh
+```
+
+The main probe settings can be overridden without editing code, for example:
+
+```bash
+LOCAL_WEIGHT=0.2 TOP_TOKENS=6 ADAPTER_EPOCHS=8 \
+  bash scripts/run_cloud_p2_local.sh
+```
+
+The probe freezes the P1 specialist, trains only a lightweight local-token
+adapter on the initial condition, and evaluates all four conditions. It writes
+global, local, and fused metrics to `p2_report.json`; sample-level Top-k fault
+candidates, uncertainty, agreement, and Top symptom evidence are written to
+`evaluation_predictions.jsonl`. This structured packet is the input contract
+for the later continuous-prompt Qwen stage. The same command also generates
+PNG and editable-vector PDF figures under `figures/`, including branch
+comparisons, fused confusion matrices, uncertainty and branch agreement, and a
+fault-to-symptom evidence heatmap.

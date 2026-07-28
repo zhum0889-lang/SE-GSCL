@@ -9,6 +9,23 @@
         "The rolling bearing is healthy and has no localized defect.",
         "The vibration is stable without periodic impact components caused by bearing damage.",
         "The measured signal represents the normal operating state of the bearing."
+      ],
+      "symptoms": [
+        {
+          "id": "normal_stable",
+          "name": "Stable vibration",
+          "description": "The vibration amplitude remains stable without a repeating train of localized impacts."
+        },
+        {
+          "id": "normal_no_characteristic_peak",
+          "name": "No fault-frequency peak",
+          "description": "No persistent peak or harmonic pattern is associated with a bearing characteristic fault frequency."
+        },
+        {
+          "id": "normal_low_impulsiveness",
+          "name": "Low impulsiveness",
+          "description": "The signal has low impulsiveness and lacks high-frequency resonance bursts caused by localized damage."
+        }
       ]
     },
     {
@@ -18,6 +35,23 @@
         "The bearing has a localized defect on the inner race.",
         "Inner-race damage produces repeated impacts modulated by shaft rotation.",
         "The vibration contains characteristic components associated with the ball-pass frequency of the inner race."
+      ],
+      "symptoms": [
+        {
+          "id": "inner_bpfi_impacts",
+          "name": "BPFI impact train",
+          "description": "Repeated impacts occur near the ball-pass frequency of the inner race and its harmonics."
+        },
+        {
+          "id": "inner_rotational_sidebands",
+          "name": "Rotational sidebands",
+          "description": "Inner-race fault components exhibit sidebands or amplitude modulation related to shaft rotation."
+        },
+        {
+          "id": "inner_resonance_bursts",
+          "name": "Resonance bursts",
+          "description": "Localized inner-race impacts excite short high-frequency resonance bursts in the vibration signal."
+        }
       ]
     },
     {
@@ -27,6 +61,23 @@
         "The bearing has a localized defect on a rolling element.",
         "Rolling-element damage produces impacts whose amplitude is affected by ball spin and load-zone motion.",
         "The vibration contains characteristic components associated with the ball spin frequency."
+      ],
+      "symptoms": [
+        {
+          "id": "ball_bsf_components",
+          "name": "Ball-spin components",
+          "description": "Spectral components and harmonics occur near the ball spin frequency."
+        },
+        {
+          "id": "ball_load_zone_modulation",
+          "name": "Load-zone modulation",
+          "description": "Impact amplitude changes as the damaged rolling element enters and leaves the bearing load zone."
+        },
+        {
+          "id": "ball_irregular_impacts",
+          "name": "Irregular rolling-element impacts",
+          "description": "Rolling-element damage produces less stationary impact intervals with cage- or shaft-related sidebands."
+        }
       ]
     },
     {
@@ -36,6 +87,23 @@
         "The bearing has a localized defect on the outer race.",
         "Outer-race damage generates repeated impacts as rolling elements pass the stationary defect.",
         "The vibration contains characteristic components associated with the ball-pass frequency of the outer race."
+      ],
+      "symptoms": [
+        {
+          "id": "outer_bpfo_impacts",
+          "name": "BPFO impact train",
+          "description": "Repeated impacts occur near the ball-pass frequency of the outer race and its harmonics."
+        },
+        {
+          "id": "outer_stationary_amplitude",
+          "name": "Stationary impact amplitude",
+          "description": "A stationary outer-race defect produces a comparatively stable periodic impact amplitude."
+        },
+        {
+          "id": "outer_resonance_bursts",
+          "name": "Outer-race resonance bursts",
+          "description": "Periodic outer-race impacts excite high-frequency structural resonance bursts."
+        }
       ]
     }
   ]

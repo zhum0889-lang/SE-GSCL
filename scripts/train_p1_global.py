@@ -446,6 +446,10 @@ def main() -> int:
         )
 
     frozen_bank = projected_bank.freeze("p1-after-initial-domain").to(device)
+    torch.save(
+        projected_bank.state_dict(),
+        output_dir / "projected_text_bank.pt",
+    )
     torch.save(frozen_bank.state_dict(), output_dir / "frozen_prototypes.pt")
     test_sets = {
         domain: _as_window_dataset(dataset)
@@ -693,6 +697,15 @@ def main() -> int:
         "text_pooling": text_cache.pooling,
         "text_centering": "ontology_global_mean",
         "semantic_dim": args.semantic_dim,
+        "model_config": {
+            "input_channels": input_channels,
+            "token_dim": args.semantic_dim,
+            "num_tokens": args.num_tokens,
+            "num_domains": len(domains),
+            "window_size": args.window_size,
+            "step_size": args.step_size,
+            "max_windows_per_file": args.max_windows_per_file,
+        },
         "diagnostic_output": {
             "type": "semantic_prototype_classification",
             "producer": "lightweight_specialist",

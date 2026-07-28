@@ -23,6 +23,10 @@ class ProjectedTextPrototypeBank(nn.Module):
         super().__init__()
         self.register_buffer("text_embeddings", cache.embeddings.float())
         self.register_buffer("class_ids", cache.class_ids.long())
+        self.register_buffer(
+            "text_center",
+            cache.embeddings.float().mean(dim=0, keepdim=True),
+        )
         self.class_names = cache.class_names
         self.version = cache.version
         self.projection = nn.Sequential(
@@ -33,10 +37,7 @@ class ProjectedTextPrototypeBank(nn.Module):
     def forward(self) -> torch.Tensor:
         # Decoder hidden states share a strong common direction. Removing the
         # ontology-only mean preserves class differences without using signals.
-        centered = self.text_embeddings - self.text_embeddings.mean(
-            dim=0,
-            keepdim=True,
-        )
+        centered = self.text_embeddings - self.text_center
         projected = self.projection(centered)
         prototypes = [
             projected[self.class_ids == class_id].mean(dim=0)
