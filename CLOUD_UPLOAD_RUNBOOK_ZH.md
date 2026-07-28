@@ -1,16 +1,26 @@
-# SE-GSCL 云端上传与运行说明
+# SE-GSCL 云端 Git 部署与运行说明
 
-## 1. 解压
+## 1. 首次拉取
 
-将压缩包上传到 `/mnt/workspace/fdllm`，然后执行：
+在云端工作区执行：
 
 ```bash
 cd /mnt/workspace/fdllm
-unzip se_gscl_cloud_upload.zip
+git clone https://github.com/zhum0889-lang/SE-GSCL.git se_gscl_impl
 cd se_gscl_impl
 ```
 
-压缩包不包含 CWRU、Qwen 权重、运行结果和 Python 缓存。默认复用：
+如果仓库为私有仓库，GitHub 要求登录时应使用个人访问令牌，
+不要把令牌写入脚本、配置或仓库。
+
+后续同步代码：
+
+```bash
+cd /mnt/workspace/fdllm/se_gscl_impl
+git pull --ff-only origin main
+```
+
+仓库不跟踪 CWRU、Qwen 权重、运行结果和 Python 缓存。默认复用：
 
 ```text
 /mnt/workspace/fdllm/data/CWRU

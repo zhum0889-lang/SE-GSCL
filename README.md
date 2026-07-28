@@ -3,6 +3,15 @@
 This directory is a clean implementation workspace copied from the reusable
 parts of `E:\故障检测大模型\llm\fdllm`. The source repository is unchanged.
 
+Repository:
+
+```text
+https://github.com/zhum0889-lang/SE-GSCL
+```
+
+Cloud deployment and update commands are documented in
+`CLOUD_UPLOAD_RUNBOOK_ZH.md`.
+
 ## P0 protocol fixes
 
 - leakage-resistant file-group split with guarded blocked fallback for CWRU;
