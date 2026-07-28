@@ -1,0 +1,42 @@
+{
+  "ontology": "bearing_faults_4",
+  "version": "v1",
+  "classes": [
+    {
+      "id": 0,
+      "name": "Normal",
+      "descriptions": [
+        "The rolling bearing is healthy and has no localized defect.",
+        "The vibration is stable without periodic impact components caused by bearing damage.",
+        "The measured signal represents the normal operating state of the bearing."
+      ]
+    },
+    {
+      "id": 1,
+      "name": "InnerRace",
+      "descriptions": [
+        "The bearing has a localized defect on the inner race.",
+        "Inner-race damage produces repeated impacts modulated by shaft rotation.",
+        "The vibration contains characteristic components associated with the ball-pass frequency of the inner race."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Ball",
+      "descriptions": [
+        "The bearing has a localized defect on a rolling element.",
+        "Rolling-element damage produces impacts whose amplitude is affected by ball spin and load-zone motion.",
+        "The vibration contains characteristic components associated with the ball spin frequency."
+      ]
+    },
+    {
+      "id": 3,
+      "name": "OuterRace",
+      "descriptions": [
+        "The bearing has a localized defect on the outer race.",
+        "Outer-race damage generates repeated impacts as rolling elements pass the stationary defect.",
+        "The vibration contains characteristic components associated with the ball-pass frequency of the outer race."
+      ]
+    }
+  ]
+}

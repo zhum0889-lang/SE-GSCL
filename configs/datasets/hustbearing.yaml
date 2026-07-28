@@ -1,0 +1,20 @@
+dataset: hustbearing
+label_space:
+  - Healthy
+  - InnerRace_Medium
+  - InnerRace_Severe
+  - OuterRace_Medium
+  - OuterRace_Severe
+  - Ball_Medium
+  - Ball_Severe
+  - Compound_Medium
+  - Compound_Severe
+domain_order: [20, 40, 60, 80]
+domain_unit: shaft_frequency_hz
+window_size: 2048
+step_size: 1024
+channels: [X]
+split:
+  train_ratio: 0.6
+  val_ratio: 0.2
+  strategy: blocked_with_guard

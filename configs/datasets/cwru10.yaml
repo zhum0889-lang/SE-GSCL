@@ -1,0 +1,21 @@
+dataset: cwru10
+label_space:
+  - Normal
+  - InnerRace_007
+  - InnerRace_014
+  - InnerRace_021
+  - Ball_007
+  - Ball_014
+  - Ball_021
+  - OuterRace_007
+  - OuterRace_014
+  - OuterRace_021
+domain_order: [0, 1, 2, 3]
+domain_unit: motor_load_hp
+window_size: 2048
+step_size: 1024
+channels: [drive_end]
+split:
+  train_ratio: 0.6
+  val_ratio: 0.2
+  strategy: blocked_with_guard

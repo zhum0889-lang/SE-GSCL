@@ -1,0 +1,16 @@
+dataset: paderborn
+label_space: [Healthy, InnerRace, OuterRace]
+domain_order: [0, 1, 2, 3]
+domains:
+  0: {speed_rpm: 1500, torque_nm: 0.7, radial_force_n: 1000}
+  1: {speed_rpm: 900, torque_nm: 0.7, radial_force_n: 1000}
+  2: {speed_rpm: 1500, torque_nm: 0.1, radial_force_n: 1000}
+  3: {speed_rpm: 1500, torque_nm: 0.7, radial_force_n: 400}
+window_size: 2048
+step_size: 1024
+channels: [vibration_1]
+split:
+  train_ratio: 0.6
+  val_ratio: 0.2
+  strategy: bearing_id_group
+formal_min_bearings_per_class: 3

@@ -1,0 +1,33 @@
+experiment: mvp1_global_semantic_continual_learning
+semantic_dim: 256
+text_semantics:
+  model: Qwen/Qwen2.5-7B-Instruct
+  pooling: masked_mean
+  centering: ontology_global_mean
+  ontology: configs/semantics/bearing_faults_4.json
+  freeze_llm: true
+losses:
+  global_alignment: 1.0
+  cross_condition: 0.1
+  decorrelation: 0.001
+  global_relation: 1.0
+continual:
+  memory_ratio: 0.1
+  memory_max: 400
+  class_domain_balanced_batches: true
+  snapshot_scope: replay_samples_only
+  selection:
+    stable: 0.4
+    hard: 0.4
+    diverse: 0.2
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  seeds: [42, 43, 44, 45, 46]
+  initial_stage:
+    train_signal_specialist: true
+    train_text_projection: true
+  continual_stage:
+    train_signal_specialist: true
+    train_text_projection: false
+    freeze_prototypes: true
