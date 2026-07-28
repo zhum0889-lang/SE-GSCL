@@ -16,6 +16,9 @@ TOP_TOKENS="${TOP_TOKENS:-4}"
 LOCAL_TEMPERATURE="${LOCAL_TEMPERATURE:-0.1}"
 LOCAL_WEIGHT="${LOCAL_WEIGHT:-0.3}"
 LEARNABLE_SYMPTOM_WEIGHTS="${LEARNABLE_SYMPTOM_WEIGHTS:-0}"
+PHYSICS_GUIDED="${PHYSICS_GUIDED:-0}"
+PHYSICS_WEIGHT="${PHYSICS_WEIGHT:-1.0}"
+ANCHOR_WEIGHT="${ANCHOR_WEIGHT:-0.1}"
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src:$ROOT"
@@ -41,7 +44,7 @@ if [[ -z "$P1_DIR" || ! -f "$P1_DIR/projected_text_bank.pt" ]]; then
 fi
 
 GLOBAL_CACHE="results/semantic_cache/qwen25_7b_bearing4_v1"
-SYMPTOM_CACHE="results/semantic_cache/qwen25_7b_bearing4_symptoms_v1"
+SYMPTOM_CACHE="results/semantic_cache/qwen25_7b_bearing4_symptoms_physics_v1"
 if [[ ! -f "$SYMPTOM_CACHE/symptom_embeddings.npz" ]]; then
   if [[ -z "$QWEN_PATH" ]]; then
     config_path="$(
@@ -76,11 +79,22 @@ fi
 "$PYTHON_BIN" -m unittest discover -s tests -q
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
-OUTPUT_DIR="results/cloud_p2_local/${RUN_ID}"
 EXTRA_ARGS=()
 if [[ "$LEARNABLE_SYMPTOM_WEIGHTS" == "1" ]]; then
   EXTRA_ARGS+=(--learnable-symptom-weights)
 fi
+if [[ "$PHYSICS_GUIDED" == "1" ]]; then
+  EXTRA_ARGS+=(
+    --physics-guided
+    --physics-weight "$PHYSICS_WEIGHT"
+    --anchor-weight "$ANCHOR_WEIGHT"
+  )
+fi
+STAGE_DIR="cloud_p2_local"
+if [[ "$PHYSICS_GUIDED" == "1" ]]; then
+  STAGE_DIR="cloud_p21_physics"
+fi
+OUTPUT_DIR="results/${STAGE_DIR}/${RUN_ID}"
 "$PYTHON_BIN" scripts/evaluate_p2_local.py \
   --data-root "$CWRU_ROOT" \
   --global-text-cache "$GLOBAL_CACHE" \

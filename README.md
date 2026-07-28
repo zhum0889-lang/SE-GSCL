@@ -277,3 +277,35 @@ for the later continuous-prompt Qwen stage. The same command also generates
 PNG and editable-vector PDF figures under `figures/`, including branch
 comparisons, fused confusion matrices, uncertainty and branch agreement, and a
 fault-to-symptom evidence heatmap.
+
+## P2.1 physics-guided local alignment
+
+P2.1 grounds the twelve local textual symptoms with scale-invariant signal
+attributes. For CWRU, the loader reads the sample-level shaft speed from each
+MAT file and uses the drive-end bearing kinematics to calculate Hilbert-envelope
+BPFI, BPFO, and BSF order prominence and sidebands. Time-domain stationarity,
+impulsiveness, and high-frequency resonance attributes complement the order
+features.
+
+The physical attributes are robustly normalized with statistics fitted only on
+the initial-condition training split. They form class-gated soft symptom
+targets. P2.1 freezes the P1 specialist and global semantic projector, while an
+independent local symptom projector and token adapter are optimized using:
+
+```text
+local class loss + physics-guided symptom loss + prototype anchor loss
+```
+
+Run the cloud probe with:
+
+```bash
+bash scripts/run_cloud_p21_physics.sh
+```
+
+The runner reuses the latest P2-ready P1 `full` checkpoint. Its report adds
+weighted symptom error, true-class symptom error, and physical/semantic Top-1
+agreement for every condition. The generated
+`p21_physical_target_vs_prediction` figure compares physics-derived targets
+with learned symptom probabilities and is the primary audit for explanation
+grounding. This remains a local-semantic experiment; Qwen text generation is
+not enabled.

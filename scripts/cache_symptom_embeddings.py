@@ -44,6 +44,7 @@ def main() -> int:
     class_names: list[str] = []
     symptom_ids: list[str] = []
     symptom_names: list[str] = []
+    physics_keys: list[str] = []
     for row in ontology["classes"]:
         class_names.append(str(row["name"]))
         symptoms = row.get("symptoms", [])
@@ -52,6 +53,7 @@ def main() -> int:
         for symptom in symptoms:
             symptom_ids.append(str(symptom["id"]))
             symptom_names.append(str(symptom["name"]))
+            physics_keys.append(str(symptom["physics_key"]))
             texts.append(str(symptom["description"]))
             class_ids.append(int(row["id"]))
 
@@ -75,6 +77,7 @@ def main() -> int:
         class_names=tuple(class_names),
         symptom_ids=tuple(symptom_ids),
         symptom_names=tuple(symptom_names),
+        physics_keys=tuple(physics_keys),
         texts=tuple(texts),
         model_id=args.model,
         ontology=str(ontology["ontology"]),

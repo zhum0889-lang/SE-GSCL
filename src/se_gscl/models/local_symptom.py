@@ -13,6 +13,7 @@ from se_gscl.semantics import FrozenSymptomPrototypeBank
 
 @dataclass
 class LocalSymptomOutput:
+    symptom_prototypes: torch.Tensor
     token_similarities: torch.Tensor
     symptom_scores: torch.Tensor
     symptom_weights: torch.Tensor
@@ -55,11 +56,14 @@ class LocalSymptomMatcher(nn.Module):
         else:
             self.register_parameter("symptom_weight_logits", None)
 
-    def _class_symptom_weights(self) -> torch.Tensor:
+    def _class_symptom_weights(
+        self,
+        reference: torch.Tensor,
+    ) -> torch.Tensor:
         weights = torch.zeros(
             self.bank.num_symptoms,
-            device=self.bank.prototypes.device,
-            dtype=self.bank.prototypes.dtype,
+            device=reference.device,
+            dtype=reference.dtype,
         )
         for class_id in range(self.bank.num_classes):
             mask = self.bank.class_ids == class_id
@@ -82,17 +86,18 @@ class LocalSymptomMatcher(nn.Module):
                 f"got {fault_tokens.shape[-1]}."
             )
         tokens = F.normalize(self.token_adapter(fault_tokens), dim=-1)
+        prototypes = self.bank()
         token_similarities = torch.einsum(
             "bnd,rd->bnr",
             tokens,
-            self.bank.prototypes,
+            prototypes,
         )
         top_count = min(self.top_tokens, int(fault_tokens.shape[1]))
         symptom_scores = token_similarities.topk(
             top_count,
             dim=1,
         ).values.mean(dim=1)
-        symptom_weights = self._class_symptom_weights()
+        symptom_weights = self._class_symptom_weights(prototypes)
         class_scores = torch.stack(
             [
                 (
@@ -116,10 +121,11 @@ class LocalSymptomMatcher(nn.Module):
             )
         joint = conditional * class_probabilities[:, self.bank.class_ids]
         fuzzy_embedding = F.normalize(
-            joint @ self.bank.prototypes,
+            joint @ prototypes,
             dim=-1,
         )
         return LocalSymptomOutput(
+            symptom_prototypes=prototypes,
             token_similarities=token_similarities,
             symptom_scores=symptom_scores,
             symptom_weights=symptom_weights,

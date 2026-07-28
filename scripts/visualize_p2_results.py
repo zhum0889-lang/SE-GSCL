@@ -373,6 +373,69 @@ def _plot_symptom_evidence(
     return figure
 
 
+def _plot_physical_grounding(
+    arrays: dict[str, np.ndarray],
+    class_names: list[str],
+    symptom_names: list[str],
+) -> plt.Figure:
+    labels = arrays["labels"]
+    targets = arrays["physical_symptom_targets"]
+    predicted = arrays["symptom_probabilities"]
+    target_matrix = np.stack(
+        [
+            targets[labels == class_id].mean(axis=0)
+            for class_id in range(len(class_names))
+        ],
+        axis=0,
+    )
+    predicted_matrix = np.stack(
+        [
+            predicted[labels == class_id].mean(axis=0)
+            for class_id in range(len(class_names))
+        ],
+        axis=0,
+    )
+    width = max(11.0, 0.75 * len(symptom_names))
+    figure, axes = plt.subplots(1, 2, figsize=(width, 3.9), sharey=True)
+    image = None
+    for axis, matrix, title in (
+        (axes[0], target_matrix, "Physics-derived soft targets"),
+        (axes[1], predicted_matrix, "Learned symptom probabilities"),
+    ):
+        image = axis.imshow(
+            matrix * 100.0,
+            vmin=0.0,
+            vmax=100.0,
+            cmap="YlGnBu",
+            aspect="auto",
+        )
+        axis.set_xticks(
+            range(len(symptom_names)),
+            symptom_names,
+            rotation=45,
+            ha="right",
+        )
+        axis.set_yticks(range(len(class_names)), class_names)
+        axis.set_xlabel("Local symptom prototype")
+        axis.set_title(title, fontweight="bold")
+    axes[0].set_ylabel("True fault class")
+    if image is not None:
+        figure.colorbar(
+            image,
+            ax=axes.ravel().tolist(),
+            fraction=0.025,
+            pad=0.02,
+            label="Mean activation (%)",
+        )
+    figure.suptitle(
+        "Physical grounding of local symptom semantics",
+        fontweight="bold",
+        y=1.02,
+    )
+    figure.subplots_adjust(wspace=0.15, bottom=0.33)
+    return figure
+
+
 def main() -> int:
     args = parse_args()
     _style()
@@ -423,6 +486,21 @@ def main() -> int:
         formats,
         args.dpi,
     )
+    if {
+        "physical_symptom_targets",
+        "symptom_probabilities",
+    }.issubset(arrays):
+        figures["physical_grounding"] = _save(
+            _plot_physical_grounding(
+                arrays,
+                class_names,
+                symptom_names,
+            ),
+            output_dir,
+            "p21_physical_target_vs_prediction",
+            formats,
+            args.dpi,
+        )
     manifest = {
         "status": "ok",
         "source": str(root.resolve()),

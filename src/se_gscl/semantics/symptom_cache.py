@@ -17,6 +17,7 @@ class SymptomEmbeddingCache:
     class_names: tuple[str, ...]
     symptom_ids: tuple[str, ...]
     symptom_names: tuple[str, ...]
+    physics_keys: tuple[str, ...]
     texts: tuple[str, ...]
     model_id: str
     ontology: str
@@ -32,6 +33,7 @@ class SymptomEmbeddingCache:
         if not (
             len(self.symptom_ids)
             == len(self.symptom_names)
+            == len(self.physics_keys)
             == len(self.texts)
             == count
         ):
@@ -70,6 +72,7 @@ class SymptomEmbeddingCache:
             "class_names": list(self.class_names),
             "symptom_ids": list(self.symptom_ids),
             "symptom_names": list(self.symptom_names),
+            "physics_keys": list(self.physics_keys),
             "texts": list(self.texts),
         }
         (root / "metadata.json").write_text(
@@ -89,6 +92,7 @@ class SymptomEmbeddingCache:
             class_names=tuple(metadata["class_names"]),
             symptom_ids=tuple(metadata["symptom_ids"]),
             symptom_names=tuple(metadata["symptom_names"]),
+            physics_keys=tuple(metadata["physics_keys"]),
             texts=tuple(metadata["texts"]),
             model_id=str(metadata["model_id"]),
             ontology=str(metadata["ontology"]),

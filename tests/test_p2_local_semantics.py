@@ -30,6 +30,7 @@ class P2LocalSemanticTests(unittest.TestCase):
             class_names=("Normal", "Inner", "Outer"),
             symptom_ids=("n1", "n2", "i1", "o1", "o2", "o3"),
             symptom_names=("N1", "N2", "I1", "O1", "O2", "O3"),
+            physics_keys=("n1", "n2", "i1", "o1", "o2", "o3"),
             texts=("nt1", "nt2", "it1", "ot1", "ot2", "ot3"),
             model_id="unit-test",
             ontology="bearing",
@@ -43,6 +44,7 @@ class P2LocalSemanticTests(unittest.TestCase):
             restored = SymptomEmbeddingCache.load(temp_dir)
         torch.testing.assert_close(cache.embeddings, restored.embeddings)
         self.assertEqual(restored.symptom_ids, cache.symptom_ids)
+        self.assertEqual(restored.physics_keys, cache.physics_keys)
         self.assertEqual(restored.class_names, cache.class_names)
 
     def test_local_matcher_normalizes_hierarchical_probabilities(self) -> None:

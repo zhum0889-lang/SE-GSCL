@@ -289,6 +289,7 @@ def load_cwru10(data_root: Path) -> list[RawRecord]:
                 source_record_id=path.name,
                 bearing_id=f"CWRU_{label_name}",
                 sensor_id="drive_end",
+                speed_rpm=_load_cwru_rpm(path, load),
             )
         )
     if not records:
@@ -579,6 +580,20 @@ def _load_local_sampling_rate(path: Path) -> Optional[float]:
 
 def _load_cwru_signal(path: Path) -> np.ndarray:
     return _load_mat_signal(path, preferred_key=None)
+
+
+def _load_cwru_rpm(path: Path, load: int) -> float:
+    mat = loadmat(path, squeeze_me=True, struct_as_record=False)
+    for key, value in mat.items():
+        if "rpm" not in key.lower():
+            continue
+        values = np.asarray(value, dtype=np.float64).reshape(-1)
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            return float(finite[0])
+    # Official nominal speeds for the 0, 1, 2, and 3 hp conditions.
+    fallback = {0: 1797.0, 1: 1772.0, 2: 1750.0, 3: 1730.0}
+    return fallback[int(load)]
 
 
 def _load_cwru_channel(path: Path, channel: str) -> np.ndarray:

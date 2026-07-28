@@ -19,6 +19,7 @@ class FrozenSymptomPrototypeBank(nn.Module):
         class_names: Sequence[str],
         symptom_ids: Sequence[str],
         symptom_names: Sequence[str],
+        physics_keys: Sequence[str],
         version: str,
     ) -> None:
         super().__init__()
@@ -28,7 +29,12 @@ class FrozenSymptomPrototypeBank(nn.Module):
             raise ValueError("prototypes must have shape [R,d].")
         if ids.shape != (values.shape[0],):
             raise ValueError("class_ids must have shape [R].")
-        if len(symptom_ids) != values.shape[0] or len(symptom_names) != values.shape[0]:
+        if not (
+            len(symptom_ids)
+            == len(symptom_names)
+            == len(physics_keys)
+            == values.shape[0]
+        ):
             raise ValueError("Symptom metadata must match prototype count.")
         observed = sorted(set(int(value) for value in ids.tolist()))
         if observed != list(range(len(class_names))):
@@ -38,6 +44,7 @@ class FrozenSymptomPrototypeBank(nn.Module):
         self.class_names = tuple(str(value) for value in class_names)
         self.symptom_ids = tuple(str(value) for value in symptom_ids)
         self.symptom_names = tuple(str(value) for value in symptom_names)
+        self.physics_keys = tuple(str(value) for value in physics_keys)
         self.version = str(version)
 
     @property
@@ -51,6 +58,9 @@ class FrozenSymptomPrototypeBank(nn.Module):
     @property
     def num_symptoms(self) -> int:
         return int(self.prototypes.shape[0])
+
+    def forward(self) -> torch.Tensor:
+        return self.prototypes
 
 
 class ProjectedSymptomPrototypeBank(nn.Module):
@@ -76,7 +86,25 @@ class ProjectedSymptomPrototypeBank(nn.Module):
         self.class_names = cache.class_names
         self.symptom_ids = cache.symptom_ids
         self.symptom_names = cache.symptom_names
+        self.physics_keys = cache.physics_keys
         self.version = cache.version
+
+    @property
+    def semantic_dim(self) -> int:
+        linear = next(
+            module
+            for module in reversed(list(self.projection.modules()))
+            if isinstance(module, nn.Linear)
+        )
+        return int(linear.out_features)
+
+    @property
+    def num_classes(self) -> int:
+        return len(self.class_names)
+
+    @property
+    def num_symptoms(self) -> int:
+        return int(self.text_embeddings.shape[0])
 
     def forward(self) -> torch.Tensor:
         centered = self.text_embeddings - self.text_center
@@ -90,5 +118,6 @@ class ProjectedSymptomPrototypeBank(nn.Module):
             self.class_names,
             self.symptom_ids,
             self.symptom_names,
+            self.physics_keys,
             version or self.version,
         )
