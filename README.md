@@ -309,3 +309,41 @@ agreement for every condition. The generated
 with learned symptom probabilities and is the primary audit for explanation
 grounding. This remains a local-semantic experiment; Qwen text generation is
 not enabled.
+
+## P2.2 semantic guard and adaptive fusion
+
+P2.2 addresses the two failure modes exposed by P2.1: unconstrained symptom
+prototype drift and fixed-weight fusion. The Qwen-derived symptom prototypes
+are frozen as semantic anchors. A trainable residual with norm below `0.2` is
+added to each prototype, preventing the local branch from turning text
+prototypes into unrestricted classifier weights.
+
+Within each ground-truth fault class, a KL loss aligns the relative
+distribution of the three predicted symptoms with the physics-derived soft
+distribution. Training uses only the initial condition, while its validation
+split controls early stopping. After the best checkpoint is restored, the same
+validation split calibrates a conservative reliability gate from branch
+entropy, Top-1 margin, and global/local agreement. Test labels are never used
+for checkpoint selection or fusion calibration.
+
+Run:
+
+```bash
+bash scripts/run_cloud_p22_semantic_guard.sh
+```
+
+The report records the selected epoch, validation gate, sample-level fusion
+weights, physical grounding metrics, and final anchor cosine similarity. The
+additional `p22_semantic_guard_and_reliability_gate` figure audits training,
+model selection, and local-branch activation across conditions.
+
+After the single full run is validated, the controlled P2.2 ablations can be
+launched with:
+
+```bash
+bash scripts/run_cloud_p22_ablation.sh
+```
+
+It compares semantic guarding without within-class ranking, semantic guarding
+with fixed fusion, and the complete P2.2 configuration. P2.1 remains the
+unconstrained-projector reference.

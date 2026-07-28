@@ -24,7 +24,11 @@ from experiments.continual_fdllm.domain_windows import (  # noqa: E402
     build_domain_window_dataset,
     build_protocol_splits,
 )
-from se_gscl.diagnostics import build_semantic_diagnostic_packet  # noqa: E402
+from se_gscl.diagnostics import (  # noqa: E402
+    build_semantic_diagnostic_packet,
+    fit_reliability_gate,
+    fuse_probabilities,
+)
 from se_gscl.losses import (  # noqa: E402
     local_symptom_alignment_loss,
     physics_guided_local_alignment_loss,
@@ -40,6 +44,7 @@ from se_gscl.semantics import (  # noqa: E402
     FrozenPrototypeBank,
     ProjectedSymptomPrototypeBank,
     ProjectedTextPrototypeBank,
+    ResidualSymptomPrototypeBank,
     SymptomEmbeddingCache,
     TextEmbeddingCache,
 )
@@ -118,6 +123,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--physics-guided", action="store_true")
     parser.add_argument("--physics-weight", type=float, default=1.0)
     parser.add_argument("--anchor-weight", type=float, default=0.1)
+    parser.add_argument("--semantic-guard", action="store_true")
+    parser.add_argument("--residual-scale", type=float, default=0.2)
+    parser.add_argument("--residual-lr-multiplier", type=float, default=5.0)
+    parser.add_argument("--ranking-weight", type=float, default=0.5)
+    parser.add_argument("--ranking-temperature", type=float, default=0.2)
+    parser.add_argument("--early-stopping-patience", type=int, default=3)
+    parser.add_argument("--adaptive-fusion", action="store_true")
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--top-symptoms", type=int, default=4)
     parser.add_argument("--device", default="cpu")
@@ -151,21 +163,6 @@ def _extract_physics(
     )
 
 
-def _fuse_probabilities(
-    global_probabilities: np.ndarray,
-    local_probabilities: np.ndarray,
-    local_weight: float,
-) -> np.ndarray:
-    global_values = np.clip(global_probabilities, 1e-12, 1.0)
-    local_values = np.clip(local_probabilities, 1e-12, 1.0)
-    fused_log = (
-        (1.0 - local_weight) * np.log(global_values)
-        + local_weight * np.log(local_values)
-    )
-    fused = np.exp(fused_log - fused_log.max(axis=1, keepdims=True))
-    return fused / fused.sum(axis=1, keepdims=True)
-
-
 def _metrics(
     labels: np.ndarray,
     predictions: np.ndarray,
@@ -190,6 +187,7 @@ def _grounding_metrics(
     weights: np.ndarray,
     labels: np.ndarray,
     symptom_class_ids: np.ndarray,
+    ranking_temperature: float = 0.2,
 ) -> dict[str, float]:
     denominator = max(float(weights.sum()), 1.0)
     weighted_mae = float((np.abs(predicted - targets) * weights).sum())
@@ -201,6 +199,7 @@ def _grounding_metrics(
         / active_denominator
     )
     top_matches: list[bool] = []
+    distribution_l1: list[float] = []
     for index, label in enumerate(labels):
         mask = symptom_class_ids == int(label)
         valid = mask & (weights[index] > 0)
@@ -210,12 +209,131 @@ def _grounding_metrics(
         predicted_top = candidates[np.argmax(predicted[index, candidates])]
         target_top = candidates[np.argmax(targets[index, candidates])]
         top_matches.append(bool(predicted_top == target_top))
+        predicted_values = np.clip(
+            predicted[index, candidates],
+            1e-12,
+            None,
+        )
+        predicted_distribution = (
+            predicted_values / predicted_values.sum()
+        )
+        target_logits = (
+            targets[index, candidates] / ranking_temperature
+        )
+        target_distribution = np.exp(target_logits - target_logits.max())
+        target_distribution = (
+            target_distribution / target_distribution.sum()
+        )
+        distribution_l1.append(
+            float(
+                0.5
+                * np.abs(
+                    predicted_distribution - target_distribution
+                ).sum()
+            )
+        )
     return {
         "weighted_mae": weighted_mae / denominator,
         "true_class_symptom_mae": active_mae,
         "true_class_top1_agreement": (
             float(np.mean(top_matches)) if top_matches else 0.0
         ),
+        "true_class_distribution_l1": (
+            float(np.mean(distribution_l1))
+            if distribution_l1
+            else 0.0
+        ),
+    }
+
+
+@torch.inference_mode()
+def _validation_pass(
+    specialist: SEGSCLSpecialist,
+    frozen_global: FrozenPrototypeBank,
+    matcher: LocalSymptomMatcher,
+    dataset: WindowDataset,
+    anchor_prototypes: torch.Tensor,
+    symptom_class_ids: torch.Tensor,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> dict[str, object]:
+    matcher.eval()
+    total_examples = 0
+    totals = {
+        "loss": 0.0,
+        "classification": 0.0,
+        "physics": 0.0,
+        "prototype_anchor": 0.0,
+        "within_class_distribution": 0.0,
+    }
+    labels_rows: list[np.ndarray] = []
+    global_rows: list[np.ndarray] = []
+    local_rows: list[np.ndarray] = []
+    for batch in DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+    ):
+        batch_size = len(batch["label"])
+        specialist_output = specialist(batch["x"].to(device))
+        local_output = matcher(specialist_output.fault_tokens)
+        if args.physics_guided:
+            loss, components = physics_guided_local_alignment_loss(
+                local_output,
+                batch["label"].to(device),
+                batch["symptom_targets"].to(device),
+                batch["symptom_target_weights"].to(device),
+                anchor_prototypes,
+                temperature=args.local_temperature,
+                physics_weight=args.physics_weight,
+                anchor_weight=args.anchor_weight,
+                ranking_weight=(
+                    args.ranking_weight if args.semantic_guard else 0.0
+                ),
+                ranking_temperature=args.ranking_temperature,
+                symptom_class_ids=symptom_class_ids,
+            )
+        else:
+            loss = local_symptom_alignment_loss(
+                local_output,
+                batch["label"].to(device),
+                temperature=args.local_temperature,
+            )
+            components = {}
+        totals["loss"] += float(loss.cpu()) * batch_size
+        for key, value in components.items():
+            totals[key] += float(value.cpu()) * batch_size
+        total_examples += batch_size
+        labels_rows.append(batch["label"].numpy())
+        local_rows.append(local_output.class_probabilities.cpu().numpy())
+        global_rows.append(
+            torch.softmax(
+                frozen_global.similarities(
+                    specialist_output.fault_embedding
+                )
+                / 0.07,
+                dim=1,
+            ).cpu().numpy()
+        )
+    labels = np.concatenate(labels_rows)
+    global_probabilities = np.concatenate(global_rows)
+    local_probabilities = np.concatenate(local_rows)
+    predictions = local_probabilities.argmax(axis=1)
+    metrics = _metrics(
+        labels,
+        predictions,
+        local_probabilities.shape[1],
+    )
+    return {
+        **{
+            key: value / max(1, total_examples)
+            for key, value in totals.items()
+        },
+        "balanced_accuracy": metrics["balanced_accuracy"],
+        "accuracy": metrics["accuracy"],
+        "labels": labels,
+        "global_probabilities": global_probabilities,
+        "local_probabilities": local_probabilities,
     }
 
 
@@ -223,6 +341,12 @@ def main() -> int:
     args = parse_args()
     if not 0.0 <= args.local_weight <= 1.0:
         raise ValueError("local_weight must be in [0,1].")
+    if args.early_stopping_patience <= 0:
+        raise ValueError("early_stopping_patience must be positive.")
+    if args.ranking_weight < 0:
+        raise ValueError("ranking_weight must be non-negative.")
+    if args.residual_lr_multiplier <= 0:
+        raise ValueError("residual_lr_multiplier must be positive.")
     device = torch.device(args.device)
     p1_dir = Path(args.p1_dir)
     output_dir = Path(args.output_dir)
@@ -257,7 +381,7 @@ def main() -> int:
         max_windows_per_file=int(model_config["max_windows_per_file"]),
         normalize=False,
     )
-    train_by_domain, _, test_by_domain, _ = build_protocol_splits(
+    train_by_domain, val_by_domain, test_by_domain, _ = build_protocol_splits(
         raw,
         domains,
         seed=seed,
@@ -276,6 +400,10 @@ def main() -> int:
     normalized_test = {
         domain: apply_normalization(dataset, stats)
         for domain, dataset in test_by_domain.items()
+    }
+    normalized_val = {
+        domain: apply_normalization(dataset, stats)
+        for domain, dataset in val_by_domain.items()
     }
 
     specialist = SEGSCLSpecialist(
@@ -309,7 +437,20 @@ def main() -> int:
     )
     frozen_global.load_state_dict(_load_state(p1_dir / "frozen_prototypes.pt"))
     frozen_global.to(device)
-    if args.physics_guided:
+    if args.semantic_guard and not args.physics_guided:
+        raise ValueError("--semantic-guard requires --physics-guided.")
+    if args.semantic_guard:
+        base_symptom_bank = ProjectedSymptomPrototypeBank(
+            symptom_cache,
+            projected_global.projection,
+            projected_global.text_center,
+        ).to(device).freeze("p22-base-symptoms").to(device)
+        symptom_bank = ResidualSymptomPrototypeBank(
+            base_symptom_bank,
+            max_residual_scale=args.residual_scale,
+        ).to(device)
+        anchor_prototypes = base_symptom_bank().detach().clone()
+    elif args.physics_guided:
         local_projection = copy.deepcopy(projected_global.projection)
         local_projection.requires_grad_(True)
         symptom_bank = ProjectedSymptomPrototypeBank(
@@ -337,6 +478,7 @@ def main() -> int:
         calibrator.save(output_dir / "physics_calibrator.json")
 
         train_sets = {}
+        val_sets = {}
         test_sets = {}
         for domain in domains:
             train_attributes = calibrator.transform(
@@ -354,6 +496,22 @@ def main() -> int:
                 normalized_train[domain],
                 symptom_targets=train_targets,
                 symptom_target_weights=train_weights,
+            )
+            val_attributes = calibrator.transform(
+                _extract_physics(
+                    normalized_val[domain],
+                    symptom_cache.physics_keys,
+                )
+            )
+            val_targets, val_weights = build_symptom_soft_targets(
+                val_attributes,
+                np.asarray(normalized_val[domain]["y"], dtype=np.int64),
+                symptom_cache.class_ids.numpy(),
+            )
+            val_sets[domain] = WindowDataset(
+                normalized_val[domain],
+                symptom_targets=val_targets,
+                symptom_target_weights=val_weights,
             )
             test_attributes = calibrator.transform(
                 _extract_physics(
@@ -385,6 +543,10 @@ def main() -> int:
             domain: WindowDataset(dataset)
             for domain, dataset in normalized_test.items()
         }
+        val_sets = {
+            domain: WindowDataset(dataset)
+            for domain, dataset in normalized_val.items()
+        }
 
     matcher = LocalSymptomMatcher(
         symptom_bank,
@@ -392,13 +554,42 @@ def main() -> int:
         temperature=args.local_temperature,
         learnable_symptom_weights=args.learnable_symptom_weights,
     ).to(device)
+    if args.semantic_guard and len(val_sets[domains[0]]) == 0:
+        raise ValueError(
+            "P2.2 requires a non-empty initial-domain validation split. "
+            "Increase max_windows_per_file in the P1 protocol."
+        )
 
     history: list[dict[str, float | int]] = []
+    best_epoch: int | None = None
+    best_validation_loss = float("inf")
+    best_state: dict[str, torch.Tensor] | None = None
+    stale_epochs = 0
     if args.adapter_epochs > 0:
-        optimizer = torch.optim.AdamW(
-            matcher.parameters(),
-            lr=args.learning_rate,
-        )
+        if args.semantic_guard:
+            main_parameters = list(matcher.token_adapter.parameters())
+            if matcher.symptom_weight_logits is not None:
+                main_parameters.append(matcher.symptom_weight_logits)
+            optimizer = torch.optim.AdamW(
+                [
+                    {
+                        "params": main_parameters,
+                        "lr": args.learning_rate,
+                    },
+                    {
+                        "params": matcher.bank.parameters(),
+                        "lr": (
+                            args.learning_rate
+                            * args.residual_lr_multiplier
+                        ),
+                    },
+                ]
+            )
+        else:
+            optimizer = torch.optim.AdamW(
+                matcher.parameters(),
+                lr=args.learning_rate,
+            )
         loader = DataLoader(
             train_sets[domains[0]],
             batch_size=args.batch_size,
@@ -411,6 +602,7 @@ def main() -> int:
                 "classification": 0.0,
                 "physics": 0.0,
                 "prototype_anchor": 0.0,
+                "within_class_distribution": 0.0,
             }
             steps = 0
             for batch in loader:
@@ -427,6 +619,13 @@ def main() -> int:
                         temperature=args.local_temperature,
                         physics_weight=args.physics_weight,
                         anchor_weight=args.anchor_weight,
+                        ranking_weight=(
+                            args.ranking_weight
+                            if args.semantic_guard
+                            else 0.0
+                        ),
+                        ranking_temperature=args.ranking_temperature,
+                        symptom_class_ids=symptom_bank.class_ids,
                     )
                     for key, value in components.items():
                         component_totals[key] += float(value.detach().cpu())
@@ -441,20 +640,71 @@ def main() -> int:
                 optimizer.step()
                 total += float(loss.detach().cpu())
                 steps += 1
-            history.append(
-                {
-                    "epoch": epoch,
-                    "loss": total / max(1, steps),
-                    **(
-                        {
-                            key: value / max(1, steps)
-                            for key, value in component_totals.items()
-                        }
-                        if args.physics_guided
-                        else {}
-                    ),
-                }
-            )
+            epoch_row: dict[str, float | int] = {
+                "epoch": epoch,
+                "loss": total / max(1, steps),
+                **(
+                    {
+                        key: value / max(1, steps)
+                        for key, value in component_totals.items()
+                    }
+                    if args.physics_guided
+                    else {}
+                ),
+            }
+            if args.semantic_guard:
+                validation = _validation_pass(
+                    specialist,
+                    frozen_global,
+                    matcher,
+                    val_sets[domains[0]],
+                    anchor_prototypes,
+                    symptom_bank.class_ids,
+                    args,
+                    device,
+                )
+                for key, value in validation.items():
+                    if isinstance(value, (float, int)):
+                        epoch_row[f"validation_{key}"] = float(value)
+                validation_loss = float(validation["loss"])
+                if validation_loss < best_validation_loss - 1e-6:
+                    best_validation_loss = validation_loss
+                    best_epoch = epoch
+                    best_state = {
+                        key: value.detach().cpu().clone()
+                        for key, value in matcher.state_dict().items()
+                    }
+                    stale_epochs = 0
+                else:
+                    stale_epochs += 1
+            history.append(epoch_row)
+            if (
+                args.semantic_guard
+                and stale_epochs >= args.early_stopping_patience
+            ):
+                break
+
+    if args.semantic_guard and best_state is not None:
+        matcher.load_state_dict(best_state)
+        matcher.to(device)
+
+    reliability_gate = None
+    if args.adaptive_fusion:
+        validation = _validation_pass(
+            specialist,
+            frozen_global,
+            matcher,
+            val_sets[domains[0]],
+            anchor_prototypes,
+            symptom_bank.class_ids,
+            args,
+            device,
+        )
+        reliability_gate = fit_reliability_gate(
+            np.asarray(validation["global_probabilities"]),
+            np.asarray(validation["local_probabilities"]),
+            np.asarray(validation["labels"]),
+        )
 
     matcher.eval()
     domain_metrics: dict[str, dict[str, object]] = {}
@@ -466,6 +716,7 @@ def main() -> int:
         "global_probabilities": [],
         "local_probabilities": [],
         "fused_probabilities": [],
+        "fusion_local_weights": [],
         "symptom_joint_probabilities": [],
         "symptom_probabilities": [],
         "fuzzy_symptom_embeddings": [],
@@ -525,10 +776,18 @@ def main() -> int:
                 symptom_probability_rows
             )
             fuzzy_embeddings = np.concatenate(fuzzy_rows)
-            fused_probabilities = _fuse_probabilities(
+            local_weights = (
+                reliability_gate.local_weights(
+                    global_probabilities,
+                    local_probabilities,
+                )
+                if reliability_gate is not None
+                else np.full(len(labels), args.local_weight)
+            )
+            fused_probabilities = fuse_probabilities(
                 global_probabilities,
                 local_probabilities,
-                args.local_weight,
+                local_weights,
             )
             predictions = fused_probabilities.argmax(axis=1)
             domain_metrics[str(domain)] = {
@@ -543,6 +802,18 @@ def main() -> int:
                     len(class_names),
                 ),
                 "fused": _metrics(labels, predictions, len(class_names)),
+                "fusion_diagnostics": {
+                    "mean_local_weight": float(np.mean(local_weights)),
+                    "local_override_rate": float(
+                        np.mean(local_weights >= 0.5)
+                    ),
+                    "branch_agreement_rate": float(
+                        np.mean(
+                            global_probabilities.argmax(axis=1)
+                            == local_probabilities.argmax(axis=1)
+                        )
+                    ),
+                },
             }
             if args.physics_guided:
                 physical_targets = np.concatenate(target_rows)
@@ -553,6 +824,7 @@ def main() -> int:
                     physical_weights,
                     labels,
                     symptom_cache.class_ids.numpy(),
+                    ranking_temperature=args.ranking_temperature,
                 )
             for index in range(len(labels)):
                 packet = build_semantic_diagnostic_packet(
@@ -564,7 +836,7 @@ def main() -> int:
                     global_probabilities=global_probabilities[index],
                     local_probabilities=local_probabilities[index],
                     symptom_joint_probabilities=joint_probabilities[index],
-                    local_weight=args.local_weight,
+                    local_weight=float(local_weights[index]),
                     top_k=args.top_k,
                     top_symptoms=args.top_symptoms,
                 )
@@ -578,6 +850,7 @@ def main() -> int:
                         "is_correct": bool(
                             packet.predicted_class_id == int(labels[index])
                         ),
+                        "fusion_local_weight": float(local_weights[index]),
                         **(
                             {
                                 "physical_symptom_targets": physical_targets[
@@ -598,6 +871,7 @@ def main() -> int:
             arrays["global_probabilities"].append(global_probabilities)
             arrays["local_probabilities"].append(local_probabilities)
             arrays["fused_probabilities"].append(fused_probabilities)
+            arrays["fusion_local_weights"].append(local_weights)
             arrays["symptom_joint_probabilities"].append(joint_probabilities)
             arrays["symptom_probabilities"].append(symptom_probabilities)
             arrays["fuzzy_symptom_embeddings"].append(fuzzy_embeddings)
@@ -632,9 +906,13 @@ def main() -> int:
     summary = {
         "status": "ok",
         "stage": (
-            "P2.1 physics-guided local symptom alignment"
-            if args.physics_guided
-            else "P2 local symptom probe"
+            "P2.2 semantic-guarded symptom alignment and adaptive fusion"
+            if args.semantic_guard
+            else (
+                "P2.1 physics-guided local symptom alignment"
+                if args.physics_guided
+                else "P2 local symptom probe"
+            )
         ),
         "dataset": report["dataset"],
         "domains": domains,
@@ -646,7 +924,11 @@ def main() -> int:
         "adapter_epochs": args.adapter_epochs,
         "specialist_frozen": True,
         "global_text_projector_frozen": True,
-        "local_symptom_projector_trainable": args.physics_guided,
+        "local_symptom_projector_trainable": (
+            args.physics_guided and not args.semantic_guard
+        ),
+        "bounded_residual_trainable": args.semantic_guard,
+        "semantic_guard": args.semantic_guard,
         "physics_guided": args.physics_guided,
         "physics_keys": symptom_cache.physics_keys,
         "bearing_kinematics": (
@@ -669,6 +951,12 @@ def main() -> int:
             "learning_rate": args.learning_rate,
             "physics_weight": args.physics_weight,
             "anchor_weight": args.anchor_weight,
+            "ranking_weight": args.ranking_weight,
+            "ranking_temperature": args.ranking_temperature,
+            "residual_scale": args.residual_scale,
+            "residual_lr_multiplier": args.residual_lr_multiplier,
+            "early_stopping_patience": args.early_stopping_patience,
+            "adaptive_fusion": args.adaptive_fusion,
             "seed": seed,
         },
         "diagnostic_output": {
@@ -680,11 +968,49 @@ def main() -> int:
                 if args.physics_guided
                 else "fault class labels"
             ),
-            "fusion": "weighted geometric probability fusion",
+            "fusion": (
+                "validation-calibrated reliability gate"
+                if reliability_gate is not None
+                else "weighted geometric probability fusion"
+            ),
             "llm_text_generation_enabled": False,
         },
         "domain_metrics": domain_metrics,
         "history": history,
+        "model_selection": {
+            "split": f"domain_{domains[0]}_validation",
+            "best_epoch": best_epoch,
+            "best_validation_loss": (
+                best_validation_loss
+                if np.isfinite(best_validation_loss)
+                else None
+            ),
+            "epochs_completed": len(history),
+        },
+        "semantic_preservation": {
+            "mean_anchor_cosine_similarity": float(
+                torch.sum(
+                    final_symptom_prototypes
+                    * anchor_prototypes,
+                    dim=1,
+                ).mean().cpu()
+            ),
+            "mean_anchor_cosine_distance": float(
+                (
+                    1.0
+                    - torch.sum(
+                        final_symptom_prototypes
+                        * anchor_prototypes,
+                        dim=1,
+                    )
+                ).mean().cpu()
+            ),
+        },
+        "reliability_gate": (
+            None
+            if reliability_gate is None
+            else reliability_gate.to_dict()
+        ),
         "physics_calibration": (
             None if calibrator is None else calibrator.to_dict()
         ),

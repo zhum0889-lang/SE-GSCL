@@ -8,6 +8,7 @@ from .alignment import (
 from .local_alignment import (
     local_symptom_alignment_loss,
     physics_guided_local_alignment_loss,
+    within_class_symptom_distribution_loss,
 )
 from .relation import global_relation_snapshot_loss, snapshot_probabilities
 
@@ -18,5 +19,6 @@ __all__ = [
     "global_relation_snapshot_loss",
     "local_symptom_alignment_loss",
     "physics_guided_local_alignment_loss",
+    "within_class_symptom_distribution_loss",
     "snapshot_probabilities",
 ]

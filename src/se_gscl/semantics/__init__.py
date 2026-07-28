@@ -1,7 +1,11 @@
 """Frozen LLM semantics and versioned prototype interfaces."""
 
 from .prototype_bank import FrozenPrototypeBank
-from .symptom_bank import FrozenSymptomPrototypeBank, ProjectedSymptomPrototypeBank
+from .symptom_bank import (
+    FrozenSymptomPrototypeBank,
+    ProjectedSymptomPrototypeBank,
+    ResidualSymptomPrototypeBank,
+)
 from .symptom_cache import SymptomEmbeddingCache
 from .text_cache import TextEmbeddingCache, read_ontology
 from .text_encoder import FrozenDecoderTextEncoder, masked_mean_pool
@@ -13,6 +17,7 @@ __all__ = [
     "FrozenSymptomPrototypeBank",
     "ProjectedTextPrototypeBank",
     "ProjectedSymptomPrototypeBank",
+    "ResidualSymptomPrototypeBank",
     "SymptomEmbeddingCache",
     "TextEmbeddingCache",
     "masked_mean_pool",

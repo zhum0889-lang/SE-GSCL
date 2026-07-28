@@ -436,6 +436,121 @@ def _plot_physical_grounding(
     return figure
 
 
+def _plot_p22_training_and_gate(
+    report: dict[str, Any],
+    domains: list[int],
+) -> plt.Figure:
+    history = report["history"]
+    epochs = np.asarray([row["epoch"] for row in history])
+    figure, axes = plt.subplots(1, 3, figsize=(11.4, 3.4))
+
+    for key, label, color in (
+        ("classification", "Classification", "#0072B2"),
+        ("physics", "Physics BCE", "#009E73"),
+        ("within_class_distribution", "Within-class KL", "#D55E00"),
+    ):
+        values = np.asarray([row.get(key, np.nan) for row in history])
+        axes[0].plot(
+            epochs,
+            values,
+            marker="o",
+            linewidth=1.8,
+            label=label,
+            color=color,
+        )
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Training loss")
+    axes[0].set_title("P2.2 loss components", fontweight="bold")
+    axes[0].legend(frameon=False)
+
+    validation_loss = np.asarray(
+        [row.get("validation_loss", np.nan) for row in history]
+    )
+    validation_accuracy = np.asarray(
+        [row.get("validation_balanced_accuracy", np.nan) for row in history]
+    ) * 100.0
+    axes[1].plot(
+        epochs,
+        validation_loss,
+        marker="o",
+        color="#CC79A7",
+        linewidth=1.8,
+        label="Validation loss",
+    )
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Validation loss")
+    axes[1].set_title("Validation model selection", fontweight="bold")
+    accuracy_axis = axes[1].twinx()
+    accuracy_axis.plot(
+        epochs,
+        validation_accuracy,
+        marker="s",
+        color="#E69F00",
+        linewidth=1.5,
+        label="Balanced accuracy",
+    )
+    accuracy_axis.set_ylabel("Balanced accuracy (%)")
+    best_epoch = report["model_selection"]["best_epoch"]
+    if best_epoch is not None:
+        axes[1].axvline(
+            best_epoch,
+            color="black",
+            linestyle="--",
+            linewidth=1.0,
+        )
+
+    mean_weights = [
+        report["domain_metrics"][str(domain)]["fusion_diagnostics"][
+            "mean_local_weight"
+        ]
+        * 100.0
+        for domain in domains
+    ]
+    override_rates = [
+        report["domain_metrics"][str(domain)]["fusion_diagnostics"][
+            "local_override_rate"
+        ]
+        * 100.0
+        for domain in domains
+    ]
+    x = np.arange(len(domains))
+    width = 0.36
+    axes[2].bar(
+        x - width / 2,
+        mean_weights,
+        width,
+        color="#56B4E9",
+        edgecolor="black",
+        linewidth=0.4,
+        label="Mean local weight",
+    )
+    axes[2].bar(
+        x + width / 2,
+        override_rates,
+        width,
+        color="#D55E00",
+        edgecolor="black",
+        linewidth=0.4,
+        label="Local override rate",
+    )
+    axes[2].set_xticks(x, [f"D{domain}" for domain in domains])
+    axes[2].set_ylim(0.0, 105.0)
+    axes[2].set_ylabel("%")
+    axes[2].set_title("Reliability-gated fusion", fontweight="bold")
+    axes[2].legend(frameon=False)
+    for axis in axes:
+        axis.spines[["top", "right"]].set_visible(False)
+        axis.grid(axis="y", color="#D9D9D9", linewidth=0.6)
+        axis.set_axisbelow(True)
+    figure.suptitle(
+        "Semantic preservation and validation-calibrated fusion",
+        fontweight="bold",
+        y=1.02,
+    )
+    figure.tight_layout()
+    return figure
+
+
 def main() -> int:
     args = parse_args()
     _style()
@@ -498,6 +613,14 @@ def main() -> int:
             ),
             output_dir,
             "p21_physical_target_vs_prediction",
+            formats,
+            args.dpi,
+        )
+    if report.get("semantic_guard"):
+        figures["semantic_guard"] = _save(
+            _plot_p22_training_and_gate(report, domains),
+            output_dir,
+            "p22_semantic_guard_and_reliability_gate",
             formats,
             args.dpi,
         )

@@ -19,6 +19,14 @@ LEARNABLE_SYMPTOM_WEIGHTS="${LEARNABLE_SYMPTOM_WEIGHTS:-0}"
 PHYSICS_GUIDED="${PHYSICS_GUIDED:-0}"
 PHYSICS_WEIGHT="${PHYSICS_WEIGHT:-1.0}"
 ANCHOR_WEIGHT="${ANCHOR_WEIGHT:-0.1}"
+SEMANTIC_GUARD="${SEMANTIC_GUARD:-0}"
+RESIDUAL_SCALE="${RESIDUAL_SCALE:-0.2}"
+RESIDUAL_LR_MULTIPLIER="${RESIDUAL_LR_MULTIPLIER:-5.0}"
+RANKING_WEIGHT="${RANKING_WEIGHT:-0.5}"
+RANKING_TEMPERATURE="${RANKING_TEMPERATURE:-0.2}"
+EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-3}"
+ADAPTIVE_FUSION="${ADAPTIVE_FUSION:-0}"
+RUN_LABEL="${RUN_LABEL:-}"
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src:$ROOT"
@@ -90,11 +98,30 @@ if [[ "$PHYSICS_GUIDED" == "1" ]]; then
     --anchor-weight "$ANCHOR_WEIGHT"
   )
 fi
+if [[ "$SEMANTIC_GUARD" == "1" ]]; then
+  EXTRA_ARGS+=(
+    --semantic-guard
+    --residual-scale "$RESIDUAL_SCALE"
+    --residual-lr-multiplier "$RESIDUAL_LR_MULTIPLIER"
+    --ranking-weight "$RANKING_WEIGHT"
+    --ranking-temperature "$RANKING_TEMPERATURE"
+    --early-stopping-patience "$EARLY_STOPPING_PATIENCE"
+  )
+fi
+if [[ "$ADAPTIVE_FUSION" == "1" ]]; then
+  EXTRA_ARGS+=(--adaptive-fusion)
+fi
 STAGE_DIR="cloud_p2_local"
 if [[ "$PHYSICS_GUIDED" == "1" ]]; then
   STAGE_DIR="cloud_p21_physics"
 fi
+if [[ "$SEMANTIC_GUARD" == "1" ]]; then
+  STAGE_DIR="cloud_p22_semantic_guard"
+fi
 OUTPUT_DIR="results/${STAGE_DIR}/${RUN_ID}"
+if [[ -n "$RUN_LABEL" ]]; then
+  OUTPUT_DIR="${OUTPUT_DIR}_${RUN_LABEL}"
+fi
 "$PYTHON_BIN" scripts/evaluate_p2_local.py \
   --data-root "$CWRU_ROOT" \
   --global-text-cache "$GLOBAL_CACHE" \

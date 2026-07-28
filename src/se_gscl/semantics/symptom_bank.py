@@ -63,6 +63,49 @@ class FrozenSymptomPrototypeBank(nn.Module):
         return self.prototypes
 
 
+class ResidualSymptomPrototypeBank(nn.Module):
+    """Adapt frozen symptom prototypes with a norm-bounded residual."""
+
+    def __init__(
+        self,
+        base: FrozenSymptomPrototypeBank,
+        *,
+        max_residual_scale: float = 0.2,
+    ) -> None:
+        super().__init__()
+        if not 0.0 < max_residual_scale < 1.0:
+            raise ValueError("max_residual_scale must be in (0,1).")
+        self.register_buffer("base_prototypes", base.prototypes.detach().clone())
+        self.register_buffer("class_ids", base.class_ids.detach().clone())
+        self.residual = nn.Parameter(torch.zeros_like(self.base_prototypes))
+        self.max_residual_scale = float(max_residual_scale)
+        self.class_names = base.class_names
+        self.symptom_ids = base.symptom_ids
+        self.symptom_names = base.symptom_names
+        self.physics_keys = base.physics_keys
+        self.version = f"{base.version}-bounded-residual"
+
+    @property
+    def semantic_dim(self) -> int:
+        return int(self.base_prototypes.shape[1])
+
+    @property
+    def num_classes(self) -> int:
+        return len(self.class_names)
+
+    @property
+    def num_symptoms(self) -> int:
+        return int(self.base_prototypes.shape[0])
+
+    def forward(self) -> torch.Tensor:
+        residual_norm = self.residual.norm(dim=-1, keepdim=True)
+        bounded = self.residual / (1.0 + residual_norm)
+        return F.normalize(
+            self.base_prototypes + self.max_residual_scale * bounded,
+            dim=-1,
+        )
+
+
 class ProjectedSymptomPrototypeBank(nn.Module):
     """Project symptom descriptions with the P1 global text projector."""
 
