@@ -361,3 +361,29 @@ python scripts/visualize_p2_results.py \
   --formats png,pdf \
   --dpi 300
 ```
+
+## P3.0 frozen-Qwen diagnostic generation baseline
+
+P3.0 validates the complete diagnostic output chain before training a
+continuous-vector prompt adapter. It reads the P2.2 semantic diagnostic
+packets and supplies Qwen with only Top-k fault probabilities, branch
+agreement, uncertainty, physically grounded soft symptom evidence, and a
+restricted maintenance-action set. Ground-truth labels and correctness flags
+are removed before prompt construction.
+
+Qwen remains frozen and deterministically returns a constrained JSON
+diagnosis. The evaluator reports JSON/schema validity, candidate-label
+validity, accuracy, agreement with the upstream specialist, evidence
+grounding, maintenance-action validity, and whether uncertain samples
+explicitly acknowledge uncertainty.
+
+Run a 32-sample condition-balanced probe:
+
+```bash
+bash scripts/run_cloud_p3_frozen_qwen.sh
+```
+
+This is a structured-text baseline, not the final direct-vector method. Once
+its output contract is reliable, P3.1 will learn a lightweight adapter that
+maps the saved 256-dimensional fuzzy semantic embeddings in `p2_outputs.npz`
+to continuous Qwen prompt tokens, while keeping the Qwen backbone frozen.
