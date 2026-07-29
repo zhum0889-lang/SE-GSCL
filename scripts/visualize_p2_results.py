@@ -439,6 +439,7 @@ def _plot_physical_grounding(
 def _plot_p22_training_and_gate(
     report: dict[str, Any],
     domains: list[int],
+    arrays: dict[str, np.ndarray],
 ) -> plt.Figure:
     history = report["history"]
     epochs = np.asarray([row["epoch"] for row in history])
@@ -506,16 +507,16 @@ def _plot_p22_training_and_gate(
         * 100.0
         for domain in domains
     ]
-    override_rates = [
-        report["domain_metrics"][str(domain)]["fusion_diagnostics"][
-            "local_override_rate"
-        ]
-        * 100.0
-        for domain in domains
-    ]
+    activation_rates = []
+    for domain in domains:
+        mask = arrays["domains"] == domain
+        activation_rates.append(
+            float(np.mean(arrays["fusion_local_weights"][mask] > 0.0))
+            * 100.0
+        )
     x = np.arange(len(domains))
     width = 0.36
-    axes[2].bar(
+    mean_bars = axes[2].bar(
         x - width / 2,
         mean_weights,
         width,
@@ -524,20 +525,33 @@ def _plot_p22_training_and_gate(
         linewidth=0.4,
         label="Mean local weight",
     )
-    axes[2].bar(
+    activation_bars = axes[2].bar(
         x + width / 2,
-        override_rates,
+        activation_rates,
         width,
         color="#D55E00",
         edgecolor="black",
         linewidth=0.4,
-        label="Local override rate",
+        label="Local activation rate",
     )
     axes[2].set_xticks(x, [f"D{domain}" for domain in domains])
-    axes[2].set_ylim(0.0, 105.0)
+    gate_maximum = max([*mean_weights, *activation_rates, 1.0])
+    axes[2].set_ylim(0.0, max(5.0, gate_maximum * 1.35))
     axes[2].set_ylabel("%")
     axes[2].set_title("Reliability-gated fusion", fontweight="bold")
     axes[2].legend(frameon=False)
+    for bars in (mean_bars, activation_bars):
+        for bar in bars:
+            value = float(bar.get_height())
+            if value > 0.0:
+                axes[2].text(
+                    bar.get_x() + bar.get_width() / 2,
+                    value + 0.04 * gate_maximum,
+                    f"{value:.2f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                )
     for axis in axes:
         axis.spines[["top", "right"]].set_visible(False)
         axis.grid(axis="y", color="#D9D9D9", linewidth=0.6)
@@ -618,7 +632,7 @@ def main() -> int:
         )
     if report.get("semantic_guard"):
         figures["semantic_guard"] = _save(
-            _plot_p22_training_and_gate(report, domains),
+            _plot_p22_training_and_gate(report, domains, arrays),
             output_dir,
             "p22_semantic_guard_and_reliability_gate",
             formats,

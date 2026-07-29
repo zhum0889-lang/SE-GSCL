@@ -804,6 +804,9 @@ def main() -> int:
                 "fused": _metrics(labels, predictions, len(class_names)),
                 "fusion_diagnostics": {
                     "mean_local_weight": float(np.mean(local_weights)),
+                    "local_activation_rate": float(
+                        np.mean(local_weights > 0.0)
+                    ),
                     "local_override_rate": float(
                         np.mean(local_weights >= 0.5)
                     ),
