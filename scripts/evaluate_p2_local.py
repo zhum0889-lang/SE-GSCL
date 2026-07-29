@@ -337,6 +337,77 @@ def _validation_pass(
     }
 
 
+@torch.inference_mode()
+def _collect_continuous_prompt_split(
+    specialist: SEGSCLSpecialist,
+    frozen_global: FrozenPrototypeBank,
+    matcher: LocalSymptomMatcher,
+    dataset: WindowDataset,
+    reliability_gate,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> dict[str, np.ndarray]:
+    rows: dict[str, list[np.ndarray]] = {
+        "labels": [],
+        "domains": [],
+        "sample_ids": [],
+        "global_probabilities": [],
+        "local_probabilities": [],
+        "fused_probabilities": [],
+        "fusion_local_weights": [],
+        "symptom_joint_probabilities": [],
+        "fuzzy_symptom_embeddings": [],
+    }
+    matcher.eval()
+    for batch in DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+    ):
+        specialist_output = specialist(batch["x"].to(device))
+        global_probabilities = torch.softmax(
+            frozen_global.similarities(
+                specialist_output.fault_embedding
+            )
+            / 0.07,
+            dim=1,
+        ).cpu().numpy()
+        local_output = matcher(specialist_output.fault_tokens)
+        local_probabilities = (
+            local_output.class_probabilities.cpu().numpy()
+        )
+        local_weights = (
+            reliability_gate.local_weights(
+                global_probabilities,
+                local_probabilities,
+            )
+            if reliability_gate is not None
+            else np.full(len(batch["label"]), args.local_weight)
+        )
+        fused_probabilities = fuse_probabilities(
+            global_probabilities,
+            local_probabilities,
+            local_weights,
+        )
+        rows["labels"].append(batch["label"].numpy())
+        rows["domains"].append(batch["domain"].numpy())
+        rows["sample_ids"].append(batch["sample_id"].numpy())
+        rows["global_probabilities"].append(global_probabilities)
+        rows["local_probabilities"].append(local_probabilities)
+        rows["fused_probabilities"].append(fused_probabilities)
+        rows["fusion_local_weights"].append(local_weights)
+        rows["symptom_joint_probabilities"].append(
+            local_output.joint_probabilities.cpu().numpy()
+        )
+        rows["fuzzy_symptom_embeddings"].append(
+            local_output.fuzzy_symptom_embedding.cpu().numpy()
+        )
+    return {
+        key: np.concatenate(value)
+        for key, value in rows.items()
+    }
+
+
 def main() -> int:
     args = parse_args()
     if not 0.0 <= args.local_weight <= 1.0:
@@ -706,6 +777,32 @@ def main() -> int:
             np.asarray(validation["labels"]),
         )
 
+    prompt_exports = {}
+    for split_name, split_dataset in (
+        ("train", train_sets[domains[0]]),
+        ("validation", val_sets[domains[0]]),
+    ):
+        if len(split_dataset) == 0:
+            continue
+        split_arrays = _collect_continuous_prompt_split(
+            specialist,
+            frozen_global,
+            matcher,
+            split_dataset,
+            reliability_gate,
+            args,
+            device,
+        )
+        split_path = output_dir / f"p2_prompt_{split_name}.npz"
+        np.savez_compressed(split_path, **split_arrays)
+        prompt_exports[split_name] = {
+            "path": str(split_path.resolve()),
+            "samples": int(len(split_arrays["labels"])),
+            "domains": sorted(
+                int(value) for value in np.unique(split_arrays["domains"])
+            ),
+        }
+
     matcher.eval()
     domain_metrics: dict[str, dict[str, object]] = {}
     evaluation_rows: list[dict[str, object]] = []
@@ -1021,6 +1118,7 @@ def main() -> int:
             "Top-k classes + global/local probabilities + uncertainty "
             "+ Top symptoms; ready for later continuous-prompt assembly."
         ),
+        "continuous_prompt_exports": prompt_exports,
         "note": (
             "The local semantic branch is trained only on the initial domain; "
             "the P1 specialist and global semantic branch remain frozen. "

@@ -398,6 +398,36 @@ Existing P3.0.1 generations can be audited without loading Qwen again:
 python scripts/apply_p3_semantic_control.py --p3-dir <existing_p3_dir>
 ```
 
+## P3.1 direct continuous semantic prompting
+
+P3.1 tests whether Qwen can consume engineering semantics as continuous input
+embeddings instead of receiving fault names and symptom descriptions as text.
+The P2.2 runner now exports source-condition training and validation features
+separately from test outputs. The prompt adapter is trained only on the source
+condition and selected by source validation loss; test labels are never used
+for training or checkpoint selection.
+
+Each adapter input concatenates the 256-dimensional fuzzy symptom embedding,
+the four-class fused posterior, normalized entropy, Top-1/Top-2 margin, and
+global/local agreement. A shared low-rank adapter maps this 263-dimensional
+context to four Qwen input tokens. Qwen remains fully frozen. The first probe
+asks Qwen to generate exactly one fault label, isolating whether continuous
+vectors carry diagnostic information before explanation generation is added.
+
+First rerun P2.2 once with the current code to create
+`p2_prompt_train.npz` and `p2_prompt_validation.npz`, then launch the small
+cloud probe:
+
+```bash
+bash scripts/run_cloud_p22_semantic_guard.sh
+bash scripts/run_cloud_p31_continuous_prompt.sh
+```
+
+The default P3.1 command uses 32 training, 16 validation, and 32 stratified
+test samples for one epoch. These are connectivity settings, not paper
+results. After the direct-vector path is validated, set the sample limits to
+zero and increase the epoch count for the full source-to-cross-condition run.
+
 Run a 32-sample condition-balanced probe:
 
 ```bash
