@@ -392,6 +392,12 @@ maintenance policy. Every repair is recorded. Reports preserve both raw LLM
 metrics and controlled-system metrics so reliability gains are not attributed
 to the LLM alone.
 
+Existing P3.0.1 generations can be audited without loading Qwen again:
+
+```bash
+python scripts/apply_p3_semantic_control.py --p3-dir <existing_p3_dir>
+```
+
 Run a 32-sample condition-balanced probe:
 
 ```bash
