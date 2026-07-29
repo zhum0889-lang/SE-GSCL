@@ -306,10 +306,29 @@ def _generate_predictions(
                 }
             )
     predicted = np.asarray(predictions, dtype=np.int64)
+    num_classes = len(class_names)
+    confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for target, prediction in zip(labels, predicted):
+        if prediction >= 0:
+            confusion[int(target), int(prediction)] += 1
+    class_recalls = {
+        class_names[class_id]: float(
+            np.mean(predicted[labels == class_id] == class_id)
+        )
+        for class_id in range(num_classes)
+    }
     metrics: dict[str, Any] = {
         "samples": int(len(labels)),
         "valid_label_rate": float(np.mean(predicted >= 0)),
         "accuracy": float(np.mean(predicted == labels)),
+        "balanced_accuracy": float(np.mean(list(class_recalls.values()))),
+        "per_class_recall": class_recalls,
+        "prediction_distribution": {
+            class_names[class_id]: int(np.sum(predicted == class_id))
+            for class_id in range(num_classes)
+        },
+        "invalid_predictions": int(np.sum(predicted < 0)),
+        "confusion_matrix": confusion.tolist(),
         "domain_metrics": {},
     }
     for domain in sorted(int(value) for value in np.unique(domains)):
@@ -349,12 +368,14 @@ def main() -> int:
     train_context = build_continuous_context(train_arrays)
     validation_context = build_continuous_context(validation_arrays)
     test_context = build_continuous_context(test_arrays)
-    context_mean = train_context.mean(axis=0, keepdims=True)
-    context_std = train_context.std(axis=0, keepdims=True)
-    context_std = np.maximum(context_std, 1e-5)
-    train_context = (train_context - context_mean) / context_std
-    validation_context = (validation_context - context_mean) / context_std
-    test_context = (test_context - context_mean) / context_std
+    context_mean = np.zeros(
+        (1, train_context.shape[1]),
+        dtype=np.float32,
+    )
+    context_std = np.ones(
+        (1, train_context.shape[1]),
+        dtype=np.float32,
+    )
 
     try:
         import transformers
@@ -571,6 +592,10 @@ def main() -> int:
             "context_dim": int(train_context.shape[1]),
             "num_prompt_tokens": args.num_prompt_tokens,
             "adapter_rank": args.adapter_rank,
+            "normalization": (
+                "sample-wise L2 normalization for fuzzy semantics; "
+                "posterior and reliability values remain in [0,1]"
+            ),
         },
         "data_protocol": {
             "adapter_training_domains": sorted(

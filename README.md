@@ -413,6 +413,10 @@ global/local agreement. A shared low-rank adapter maps this 263-dimensional
 context to four Qwen input tokens. Qwen remains fully frozen. The first probe
 asks Qwen to generate exactly one fault label, isolating whether continuous
 vectors carry diagnostic information before explanation generation is added.
+The fuzzy semantic block is normalized per sample with an L2 norm, while
+posterior and reliability values retain their bounded physical scale. No
+source-domain per-dimension standardization is used, because low-variance
+source features can amplify cross-condition shift.
 
 First rerun P2.2 once with the current code to create
 `p2_prompt_train.npz` and `p2_prompt_validation.npz`, then launch the small

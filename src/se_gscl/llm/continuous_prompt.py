@@ -19,6 +19,8 @@ def build_continuous_context(
         arrays["fuzzy_symptom_embeddings"],
         dtype=np.float32,
     )
+    fuzzy_norm = np.linalg.norm(fuzzy, axis=1, keepdims=True)
+    fuzzy = fuzzy / np.maximum(fuzzy_norm, 1e-6)
     fused = np.asarray(arrays["fused_probabilities"], dtype=np.float32)
     global_probabilities = np.asarray(
         arrays["global_probabilities"],

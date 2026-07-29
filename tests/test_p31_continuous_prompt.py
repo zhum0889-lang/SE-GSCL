@@ -67,6 +67,11 @@ class P31ContinuousPromptTests(unittest.TestCase):
         context = build_continuous_context(arrays)
         self.assertEqual(context.shape, (3, 15))
         self.assertTrue(np.isfinite(context).all())
+        np.testing.assert_allclose(
+            np.linalg.norm(context[:, :8], axis=1),
+            np.ones(3),
+            rtol=1e-5,
+        )
 
     def test_adapter_emits_prompt_tokens_and_gradients(self) -> None:
         adapter = LowRankContinuousPromptAdapter(
