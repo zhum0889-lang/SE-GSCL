@@ -187,6 +187,16 @@ class P3PromptingTests(unittest.TestCase):
         self.assertEqual(controlled["explanation"], "LLM explanation")
         self.assertTrue(controlled["semantic_control_repairs"])
 
+    def test_semantic_control_verifies_medium_confidence_fault(self) -> None:
+        packet = _packet()
+        packet["confidence"] = 0.7
+        controlled = apply_semantic_control(packet, None)
+        self.assertEqual(controlled["confidence_level"], "medium")
+        self.assertEqual(
+            controlled["maintenance_action"],
+            ALLOWED_MAINTENANCE_ACTIONS[1],
+        )
+
     def test_unparseable_output_counts_as_end_to_end_failure(self) -> None:
         packet = _packet()
         packet["normalized_entropy"] = 0.9

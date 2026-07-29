@@ -190,7 +190,7 @@ def apply_semantic_control(
     if source.get("confidence_level") != confidence_level:
         repairs.append("confidence_level_calibrated")
 
-    if uncertainty:
+    if uncertainty or confidence_level != "high":
         maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[1]
     elif diagnosis == "Normal":
         maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[0]
