@@ -377,6 +377,13 @@ validity, accuracy, agreement with the upstream specialist, evidence
 grounding, maintenance-action validity, and whether uncertain samples
 explicitly acknowledge uncertainty.
 
+P3.0.1 further separates supporting evidence from counter-evidence and carries
+the fault-class provenance of every symptom into the prompt. Its evaluator
+therefore distinguishes simple name copying from diagnosis-consistent
+evidence use. Maintenance actions are also checked against a conservative
+policy: uncertain cases require verification, confident healthy cases continue
+monitoring, and confident fault cases require scheduled inspection.
+
 Run a 32-sample condition-balanced probe:
 
 ```bash

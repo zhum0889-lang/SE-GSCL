@@ -86,7 +86,8 @@ class P3PromptingTests(unittest.TestCase):
             "parsed_output": {
                 "diagnosis": "InnerRace",
                 "confidence_level": "high",
-                "evidence": ["invented frequency"],
+                "supporting_evidence": ["invented frequency"],
+                "counter_evidence": [],
                 "explanation": "test",
                 "uncertainty_acknowledged": False,
                 "maintenance_action": ALLOWED_MAINTENANCE_ACTIONS[2],
@@ -96,6 +97,57 @@ class P3PromptingTests(unittest.TestCase):
         self.assertEqual(metrics["json_parse_rate"], 1.0)
         self.assertEqual(metrics["candidate_label_valid_rate"], 1.0)
         self.assertEqual(metrics["evidence_item_grounded_rate"], 0.0)
+
+    def test_metrics_detect_class_inconsistent_support(self) -> None:
+        packet = _packet()
+        record = {
+            "packet": packet,
+            "parsed_output": {
+                "diagnosis": "InnerRace",
+                "confidence_level": "high",
+                "supporting_evidence": ["Outer-race symptom"],
+                "counter_evidence": [],
+                "explanation": "test",
+                "uncertainty_acknowledged": False,
+                "maintenance_action": ALLOWED_MAINTENANCE_ACTIONS[2],
+            },
+        }
+        packet["top_symptoms"].append(
+            {
+                "symptom_id": 9,
+                "symptom_name": "Outer-race symptom",
+                "class_id": 3,
+                "probability": 0.2,
+            }
+        )
+        metrics = evaluate_llm_outputs([record])
+        self.assertEqual(metrics["evidence_item_grounded_rate"], 1.0)
+        self.assertEqual(
+            metrics["supporting_evidence_class_consistency_rate"],
+            0.0,
+        )
+        self.assertEqual(metrics["contradictory_support_rate"], 1.0)
+
+    def test_metrics_detect_unsafe_maintenance_policy(self) -> None:
+        packet = _packet()
+        record = {
+            "packet": packet,
+            "parsed_output": {
+                "diagnosis": "InnerRace",
+                "confidence_level": "high",
+                "supporting_evidence": ["BPFI impact train"],
+                "counter_evidence": [],
+                "explanation": "test",
+                "uncertainty_acknowledged": False,
+                "maintenance_action": ALLOWED_MAINTENANCE_ACTIONS[0],
+            },
+        }
+        metrics = evaluate_llm_outputs([record])
+        self.assertEqual(metrics["maintenance_action_valid_rate"], 1.0)
+        self.assertEqual(
+            metrics["maintenance_policy_consistency_rate"],
+            0.0,
+        )
 
     def test_unparseable_output_counts_as_end_to_end_failure(self) -> None:
         packet = _packet()

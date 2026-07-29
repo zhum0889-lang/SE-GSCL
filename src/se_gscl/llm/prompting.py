@@ -24,7 +24,8 @@ Return exactly one JSON object without Markdown. The schema is:
 {
   "diagnosis": "<one supplied candidate class>",
   "confidence_level": "high|medium|low",
-  "evidence": ["<zero to three supplied symptom names>"],
+  "supporting_evidence": ["<supplied symptoms associated with diagnosis>"],
+  "counter_evidence": ["<supplied symptoms associated with other classes>"],
   "explanation": "<concise evidence-linked explanation>",
   "uncertainty_acknowledged": true,
   "maintenance_action": "<one allowed action>"
@@ -47,6 +48,10 @@ def build_diagnostic_messages(
         raise ValueError("At least one fault candidate is required.")
     candidate_names = [str(row["class_name"]) for row in candidates]
     symptom_names = [str(row["symptom_name"]) for row in symptoms]
+    class_name_by_id = {
+        int(row["class_id"]): str(row["class_name"])
+        for row in candidates
+    }
     candidate_lines = [
         (
             f"- {row['class_name']}: fused={_probability(row['probability'])}, "
@@ -56,7 +61,12 @@ def build_diagnostic_messages(
         for row in candidates
     ]
     symptom_lines = [
-        f"- {row['symptom_name']}: {_probability(row['probability'])}"
+        (
+            f"- {row['symptom_name']}: score={_probability(row['probability'])}, "
+            "associated_class="
+            f"{class_name_by_id.get(int(row['class_id']), 'not-in-Top-k')}, "
+            f"class_id={int(row['class_id'])}"
+        )
         for row in symptoms
     ]
     user_prompt = "\n".join(
@@ -89,6 +99,19 @@ def build_diagnostic_messages(
                 "Select the most defensible diagnosis. Set "
                 "uncertainty_acknowledged=true when entropy is high, the "
                 "margin is small, or the branches disagree."
+            ),
+            (
+                "A supporting symptom must have the same class_id as the "
+                "selected diagnosis. Put supplied symptoms associated with "
+                "other classes in counter_evidence and never describe them "
+                "as support."
+            ),
+            (
+                "Maintenance policy: use verification for uncertain cases; "
+                "continue monitoring only for a confident Normal diagnosis; "
+                "use scheduled inspection for a confident fault. Immediate "
+                "shutdown is unsupported because no severity evidence is "
+                "provided."
             ),
         ]
     )
@@ -172,8 +195,11 @@ def evaluate_llm_outputs(
     llm_correct: list[bool] = []
     upstream_correct: list[bool] = []
     evidence_grounded: list[bool] = []
+    supporting_class_consistent: list[bool] = []
+    counter_class_consistent: list[bool] = []
     sample_evidence_valid: list[bool] = []
     maintenance_valid: list[bool] = []
+    maintenance_policy_consistent: list[bool] = []
     uncertainty_required: list[bool] = []
     uncertainty_respected: list[bool] = []
     for record in records:
@@ -196,6 +222,7 @@ def evaluate_llm_outputs(
             llm_correct.append(False)
             sample_evidence_valid.append(False)
             maintenance_valid.append(False)
+            maintenance_policy_consistent.append(False)
             if requires_uncertainty:
                 uncertainty_respected.append(False)
             continue
@@ -203,14 +230,16 @@ def evaluate_llm_outputs(
         required = {
             "diagnosis",
             "confidence_level",
-            "evidence",
+            "supporting_evidence",
+            "counter_evidence",
             "explanation",
             "uncertainty_acknowledged",
             "maintenance_action",
         }
         valid_schema = (
             required.issubset(parsed)
-            and isinstance(parsed.get("evidence"), list)
+            and isinstance(parsed.get("supporting_evidence"), list)
+            and isinstance(parsed.get("counter_evidence"), list)
             and isinstance(parsed.get("explanation"), str)
             and isinstance(parsed.get("uncertainty_acknowledged"), bool)
             and parsed.get("confidence_level") in {"high", "medium", "low"}
@@ -233,18 +262,59 @@ def evaluate_llm_outputs(
         supplied_symptoms = {
             str(row["symptom_name"]) for row in packet["top_symptoms"]
         }
-        evidence = parsed.get("evidence", [])
-        valid_evidence_rows = [
+        symptom_class_ids = {
+            str(row["symptom_name"]): int(row["class_id"])
+            for row in packet["top_symptoms"]
+        }
+        diagnosis_class_ids = {
+            str(row["class_name"]): int(row["class_id"])
+            for row in packet["top_candidates"]
+        }
+        diagnosis_class_id = diagnosis_class_ids.get(diagnosis)
+        supporting = parsed.get("supporting_evidence", [])
+        counter = parsed.get("counter_evidence", [])
+        valid_supporting = [
             isinstance(value, str) and value in supplied_symptoms
-            for value in evidence
-        ] if isinstance(evidence, list) else []
-        evidence_grounded.extend(valid_evidence_rows)
+            for value in supporting
+        ] if isinstance(supporting, list) else []
+        valid_counter = [
+            isinstance(value, str) and value in supplied_symptoms
+            for value in counter
+        ] if isinstance(counter, list) else []
+        evidence_grounded.extend([*valid_supporting, *valid_counter])
+        supporting_consistency = [
+            valid
+            and diagnosis_class_id is not None
+            and symptom_class_ids[str(value)] == diagnosis_class_id
+            for value, valid in zip(supporting, valid_supporting)
+        ]
+        counter_consistency = [
+            valid
+            and diagnosis_class_id is not None
+            and symptom_class_ids[str(value)] != diagnosis_class_id
+            for value, valid in zip(counter, valid_counter)
+        ]
+        supporting_class_consistent.extend(supporting_consistency)
+        counter_class_consistent.extend(counter_consistency)
         sample_evidence_valid.append(
-            bool(valid_evidence_rows) and all(valid_evidence_rows)
+            bool(valid_supporting)
+            and all(valid_supporting)
+            and all(supporting_consistency)
+            and all(valid_counter)
+            and all(counter_consistency)
         )
+        maintenance_action = parsed.get("maintenance_action")
         maintenance_valid.append(
-            parsed.get("maintenance_action")
-            in ALLOWED_MAINTENANCE_ACTIONS
+            maintenance_action in ALLOWED_MAINTENANCE_ACTIONS
+        )
+        if requires_uncertainty or parsed.get("confidence_level") != "high":
+            expected_action = ALLOWED_MAINTENANCE_ACTIONS[1]
+        elif diagnosis == "Normal":
+            expected_action = ALLOWED_MAINTENANCE_ACTIONS[0]
+        else:
+            expected_action = ALLOWED_MAINTENANCE_ACTIONS[2]
+        maintenance_policy_consistent.append(
+            maintenance_action == expected_action
         )
         if requires_uncertainty:
             uncertainty_respected.append(
@@ -260,8 +330,24 @@ def evaluate_llm_outputs(
         "llm_diagnosis_accuracy": _mean(llm_correct),
         "llm_upstream_agreement_rate": _mean(upstream_agreement),
         "evidence_item_grounded_rate": _mean(evidence_grounded),
+        "supporting_evidence_class_consistency_rate": _mean(
+            supporting_class_consistent
+        ),
+        "counter_evidence_class_consistency_rate": (
+            _mean(counter_class_consistent)
+            if counter_class_consistent
+            else None
+        ),
+        "contradictory_support_rate": (
+            1.0 - _mean(supporting_class_consistent)
+            if supporting_class_consistent
+            else 0.0
+        ),
         "sample_evidence_valid_rate": _mean(sample_evidence_valid),
         "maintenance_action_valid_rate": _mean(maintenance_valid),
+        "maintenance_policy_consistency_rate": _mean(
+            maintenance_policy_consistent
+        ),
         "uncertain_samples": int(sum(uncertainty_required)),
         "uncertainty_acknowledgement_rate": _mean(uncertainty_respected),
         "evaluation_note": (

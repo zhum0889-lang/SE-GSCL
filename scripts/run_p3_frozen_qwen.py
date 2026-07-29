@@ -155,7 +155,9 @@ def main() -> int:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     summary = {
         "status": "ok",
-        "stage": "P3.0 frozen-Qwen structured semantic prompt baseline",
+        "stage": (
+            "P3.0.1 evidence-polarized frozen-Qwen semantic prompt baseline"
+        ),
         "model": str(args.model),
         "p2_dir": str(p2_dir.resolve()),
         "p2_stage": report["stage"],
@@ -175,7 +177,7 @@ def main() -> int:
         "metrics": metrics,
         "next_stage": (
             "Train a continuous semantic prompt adapter and compare it with "
-            "this structured-text baseline."
+            "this evidence-audited structured-text baseline."
         ),
     }
     (output_dir / "p3_report.json").write_text(
