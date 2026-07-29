@@ -34,6 +34,20 @@ export TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
+if ! "$PYTHON_BIN" - <<'PY'
+import matplotlib
+import numpy
+import scipy
+import sklearn
+import torch
+import transformers
+PY
+then
+  echo "Missing P2 dependencies for Python: $PYTHON_BIN" >&2
+  echo "Install them with: $PYTHON_BIN -m pip install -r requirements.txt" >&2
+  exit 5
+fi
+
 if [[ -z "$P1_DIR" ]]; then
   projector_path="$(
     find results/cloud_p1_sequence -type f \

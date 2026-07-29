@@ -347,3 +347,17 @@ bash scripts/run_cloud_p22_ablation.sh
 It compares semantic guarding without within-class ranking, semantic guarding
 with fixed fusion, and the complete P2.2 configuration. P2.1 remains the
 unconstrained-projector reference.
+
+If training finishes but figure generation stops because `matplotlib` is
+missing, install it into the same Python environment and regenerate figures
+without repeating training:
+
+```bash
+python -m pip install "matplotlib>=3.7"
+P22_DIR="$(find results/cloud_p22_semantic_guard -mindepth 1 -maxdepth 1 \
+  -type d | sort | tail -n 1)"
+python scripts/visualize_p2_results.py \
+  --root "$P22_DIR" \
+  --formats png,pdf \
+  --dpi 300
+```
