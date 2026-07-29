@@ -319,6 +319,32 @@ def _classification_metrics(
     return metrics
 
 
+def _paired_comparison(
+    generated: np.ndarray,
+    upstream: np.ndarray,
+    labels: np.ndarray,
+) -> dict[str, Any]:
+    generated_correct = generated == labels
+    upstream_correct = upstream == labels
+    return {
+        "samples": int(len(labels)),
+        "prediction_agreement_rate": float(
+            np.mean(generated == upstream)
+        ),
+        "both_correct": int(np.sum(generated_correct & upstream_correct)),
+        "qwen_only_correct": int(
+            np.sum(generated_correct & ~upstream_correct)
+        ),
+        "upstream_only_correct": int(
+            np.sum(~generated_correct & upstream_correct)
+        ),
+        "both_wrong": int(np.sum(~generated_correct & ~upstream_correct)),
+        "qwen_minus_upstream_accuracy": float(
+            np.mean(generated_correct) - np.mean(upstream_correct)
+        ),
+    }
+
+
 @torch.inference_mode()
 def _auxiliary_predictions(
     context: np.ndarray,
@@ -671,6 +697,17 @@ def main() -> int:
         device,
     )
     fused_predictions = test_arrays["fused_probabilities"].argmax(axis=1)
+    generated_predictions = np.asarray(
+        [row["predicted_class_id"] for row in predictions],
+        dtype=np.int64,
+    )
+    for row, upstream_prediction in zip(predictions, fused_predictions):
+        upstream_id = int(upstream_prediction)
+        row["upstream_fused_class_id"] = upstream_id
+        row["upstream_fused_class_name"] = class_names[upstream_id]
+        row["qwen_upstream_agreement"] = (
+            row["predicted_class_id"] == upstream_id
+        )
     fused_metrics = {
         "accuracy": float(
             np.mean(fused_predictions == test_arrays["labels"])
@@ -689,6 +726,11 @@ def main() -> int:
             )
         },
     }
+    paired_metrics = _paired_comparison(
+        generated_predictions,
+        fused_predictions,
+        test_arrays["labels"].astype(np.int64),
+    )
     checkpoint = {
         "adapter_state_dict": {
             key: value.detach().cpu()
@@ -755,6 +797,7 @@ def main() -> int:
             "epochs_completed": len(history),
             "best_epoch": best_epoch,
             "best_validation_loss": best_loss,
+            "seed": args.seed,
             "objective": (
                 "language_model_loss + auxiliary_weight * "
                 "class_balanced_semantic_classification_loss"
@@ -769,6 +812,7 @@ def main() -> int:
         "continuous_prompt_metrics": prompt_metrics,
         "training_only_auxiliary_probe_metrics": auxiliary_metrics,
         "upstream_fused_baseline": fused_metrics,
+        "qwen_upstream_paired_comparison": paired_metrics,
         "note": (
             "This stage isolates direct-vector label generation. "
             "The auxiliary classifier regularizes prompt tokens during "

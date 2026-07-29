@@ -441,6 +441,22 @@ test samples for one epoch. These are connectivity settings, not paper
 results. After the direct-vector path is validated, set the sample limits to
 zero and increase the epoch count for the full source-to-cross-condition run.
 
+After the connectivity probe succeeds, run P3.1.2 on all exported samples
+with three independent adapter initializations:
+
+```bash
+P2_DIR=<current_p2.2_export_directory> \
+SEEDS="42 52 62" \
+EPOCHS=3 \
+bash scripts/run_cloud_p312_robustness.sh
+```
+
+The robustness runner writes both JSON and Markdown summaries. It reports
+mean, standard deviation, minimum, and maximum Qwen accuracy; per-class and
+per-condition recall; auxiliary-token separability; and paired disagreements
+between Qwen and the upstream fused classifier. This stage should be completed
+before adding explanation generation or reporting paper-level performance.
+
 Run a 32-sample condition-balanced probe:
 
 ```bash

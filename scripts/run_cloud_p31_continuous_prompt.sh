@@ -12,6 +12,11 @@ EPOCHS="${EPOCHS:-1}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 GRADIENT_ACCUMULATION="${GRADIENT_ACCUMULATION:-8}"
 AUXILIARY_WEIGHT="${AUXILIARY_WEIGHT:-0.5}"
+LEARNING_RATE="${LEARNING_RATE:-2e-4}"
+PATIENCE="${PATIENCE:-2}"
+NUM_PROMPT_TOKENS="${NUM_PROMPT_TOKENS:-4}"
+ADAPTER_RANK="${ADAPTER_RANK:-64}"
+SEED="${SEED:-42}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-32}"
 MAX_VALIDATION_SAMPLES="${MAX_VALIDATION_SAMPLES:-16}"
 MAX_TEST_SAMPLES="${MAX_TEST_SAMPLES:-32}"
@@ -90,6 +95,11 @@ OUTPUT_DIR="results/cloud_p31_continuous_prompt/${RUN_ID}_${RUN_LABEL}"
   --batch-size "$BATCH_SIZE" \
   --gradient-accumulation "$GRADIENT_ACCUMULATION" \
   --auxiliary-weight "$AUXILIARY_WEIGHT" \
+  --learning-rate "$LEARNING_RATE" \
+  --patience "$PATIENCE" \
+  --num-prompt-tokens "$NUM_PROMPT_TOKENS" \
+  --adapter-rank "$ADAPTER_RANK" \
+  --seed "$SEED" \
   --max-train-samples "$MAX_TRAIN_SAMPLES" \
   --max-validation-samples "$MAX_VALIDATION_SAMPLES" \
   --max-test-samples "$MAX_TEST_SAMPLES" \

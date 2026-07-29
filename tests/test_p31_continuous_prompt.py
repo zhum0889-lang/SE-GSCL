@@ -16,7 +16,10 @@ from se_gscl.llm import (  # noqa: E402
     LowRankContinuousPromptAdapter,
     build_continuous_context,
 )
-from scripts.train_p31_continuous_prompt import _training_batch  # noqa: E402
+from scripts.train_p31_continuous_prompt import (  # noqa: E402
+    _paired_comparison,
+    _training_batch,
+)
 
 
 class _TinyFrozenDecoder(nn.Module):
@@ -120,6 +123,18 @@ class P31ContinuousPromptTests(unittest.TestCase):
         self.assertIsNotNone(adapter.down.weight.grad)
         self.assertIsNone(model.embedding.weight.grad)
         self.assertIsNone(model.head.weight.grad)
+
+    def test_paired_comparison_separates_corrected_and_new_errors(self) -> None:
+        metrics = _paired_comparison(
+            generated=np.asarray([0, 1, 2, 0]),
+            upstream=np.asarray([0, 2, 2, 3]),
+            labels=np.asarray([0, 1, 3, 3]),
+        )
+        self.assertEqual(metrics["both_correct"], 1)
+        self.assertEqual(metrics["qwen_only_correct"], 1)
+        self.assertEqual(metrics["upstream_only_correct"], 1)
+        self.assertEqual(metrics["both_wrong"], 1)
+        self.assertAlmostEqual(metrics["qwen_minus_upstream_accuracy"], 0.0)
 
 
 if __name__ == "__main__":
