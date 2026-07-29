@@ -69,14 +69,20 @@ class LowRankContinuousPromptAdapter(nn.Module):
         num_prompt_tokens: int = 4,
         rank: int = 64,
         initial_scale: float = 0.02,
+        num_classes: int | None = None,
     ) -> None:
         super().__init__()
         if min(input_dim, hidden_size, num_prompt_tokens, rank) <= 0:
             raise ValueError("All adapter dimensions must be positive.")
+        if num_classes is not None and num_classes <= 0:
+            raise ValueError("num_classes must be positive when provided.")
         self.input_dim = int(input_dim)
         self.hidden_size = int(hidden_size)
         self.num_prompt_tokens = int(num_prompt_tokens)
         self.rank = int(rank)
+        self.num_classes = (
+            int(num_classes) if num_classes is not None else None
+        )
         self.down = nn.Linear(self.input_dim, self.rank)
         self.token_codes = nn.Parameter(
             torch.empty(self.num_prompt_tokens, self.rank)
@@ -88,6 +94,11 @@ class LowRankContinuousPromptAdapter(nn.Module):
         )
         self.output_scale = nn.Parameter(
             torch.tensor(float(initial_scale))
+        )
+        self.semantic_classifier = (
+            nn.Linear(self.hidden_size, self.num_classes)
+            if self.num_classes is not None
+            else None
         )
         nn.init.normal_(self.token_codes, mean=0.0, std=0.02)
         nn.init.normal_(self.up.weight, mean=0.0, std=0.02)
@@ -102,3 +113,24 @@ class LowRankContinuousPromptAdapter(nn.Module):
         tokens = self.up(torch.tanh(latent))
         scale = self.output_scale.abs().clamp(min=1e-4, max=1.0)
         return self.output_norm(tokens) * scale
+
+    def classification_logits(
+        self,
+        prompt_tokens: torch.Tensor,
+    ) -> torch.Tensor:
+        """Classify pooled prompt tokens for training-time regularization."""
+
+        if self.semantic_classifier is None:
+            raise RuntimeError(
+                "The adapter was created without a semantic classifier."
+            )
+        expected = (
+            self.num_prompt_tokens,
+            self.hidden_size,
+        )
+        if prompt_tokens.ndim != 3 or tuple(prompt_tokens.shape[1:]) != expected:
+            raise ValueError(
+                "prompt_tokens must have shape "
+                f"[B,{self.num_prompt_tokens},{self.hidden_size}]."
+            )
+        return self.semantic_classifier(prompt_tokens.mean(dim=1))

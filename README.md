@@ -418,6 +418,15 @@ posterior and reliability values retain their bounded physical scale. No
 source-domain per-dimension standardization is used, because low-variance
 source features can amplify cross-condition shift.
 
+To detect and reduce class collapse in short prompt-adapter runs, P3.1 also
+applies a class-balanced semantic classification loss to the pooled continuous
+prompt tokens. Its lightweight classifier is a training-only regularizer:
+Qwen still generates the reported diagnosis directly from continuous tokens.
+The report separates `continuous_prompt_metrics` from
+`training_only_auxiliary_probe_metrics`. If the auxiliary probe succeeds while
+Qwen generation fails, the remaining bottleneck is token-to-language
+interpretation rather than semantic separability.
+
 First rerun P2.2 once with the current code to create
 `p2_prompt_train.npz` and `p2_prompt_validation.npz`, then launch the small
 cloud probe:

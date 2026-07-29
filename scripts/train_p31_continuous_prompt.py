@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-3)
+    parser.add_argument("--auxiliary-weight", type=float, default=0.5)
     parser.add_argument("--num-prompt-tokens", type=int, default=4)
     parser.add_argument("--adapter-rank", type=int, default=64)
     parser.add_argument("--patience", type=int, default=2)
@@ -145,7 +146,7 @@ def _training_batch(
     instruction_ids: torch.Tensor,
     target_ids: list[torch.Tensor],
     pad_token_id: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     device = contexts.device
     batch_size = len(labels)
     targets = [target_ids[int(value)].to(device) for value in labels]
@@ -175,8 +176,11 @@ def _training_batch(
         attention[index, : prefix_length + len(target)] = 1
         lm_labels[index, prefix_length : prefix_length + len(target)] = target
     text_embeddings = model.get_input_embeddings()(input_ids)
-    prompt_embeddings = adapter(contexts).to(text_embeddings.dtype)
-    inputs_embeds = torch.cat([prompt_embeddings, text_embeddings], dim=1)
+    prompt_embeddings = adapter(contexts)
+    inputs_embeds = torch.cat(
+        [prompt_embeddings.to(text_embeddings.dtype), text_embeddings],
+        dim=1,
+    )
     prompt_attention = torch.ones(
         (batch_size, adapter.num_prompt_tokens),
         dtype=attention.dtype,
@@ -190,7 +194,23 @@ def _training_batch(
         device=device,
     )
     lm_labels = torch.cat([prompt_labels, lm_labels], dim=1)
-    return inputs_embeds, attention, lm_labels
+    return inputs_embeds, attention, lm_labels, prompt_embeddings
+
+
+def _class_weights(
+    labels: np.ndarray,
+    num_classes: int,
+    device: torch.device,
+) -> torch.Tensor:
+    counts = np.bincount(labels.astype(np.int64), minlength=num_classes)
+    if np.any(counts == 0):
+        missing = np.flatnonzero(counts == 0).tolist()
+        raise ValueError(
+            f"Training split is missing fault classes: {missing}."
+        )
+    weights = len(labels) / (num_classes * counts.astype(np.float64))
+    weights = weights / weights.mean()
+    return torch.tensor(weights, dtype=torch.float32, device=device)
 
 
 def _validation_loss(
@@ -201,33 +221,52 @@ def _validation_loss(
     target_ids: list[torch.Tensor],
     pad_token_id: int,
     device: torch.device,
-) -> float:
+    class_weights: torch.Tensor,
+    auxiliary_weight: float,
+) -> dict[str, float]:
     adapter.eval()
     model.eval()
     total = 0.0
+    total_lm = 0.0
+    total_auxiliary = 0.0
     samples = 0
     for contexts, labels, _ in loader:
         contexts = contexts.to(device)
         labels = labels.to(device)
-        inputs_embeds, attention, lm_labels = _training_batch(
-            contexts,
-            labels,
-            adapter,
-            model,
-            instruction_ids,
-            target_ids,
-            pad_token_id,
+        inputs_embeds, attention, lm_labels, prompt_embeddings = (
+            _training_batch(
+                contexts,
+                labels,
+                adapter,
+                model,
+                instruction_ids,
+                target_ids,
+                pad_token_id,
+            )
         )
         with torch.inference_mode():
-            loss = model(
+            lm_loss = model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention,
                 labels=lm_labels,
                 use_cache=False,
             ).loss
+            auxiliary_loss = torch.nn.functional.cross_entropy(
+                adapter.classification_logits(prompt_embeddings),
+                labels,
+                weight=class_weights,
+            )
+            loss = lm_loss + auxiliary_weight * auxiliary_loss
         total += float(loss.cpu()) * len(labels)
+        total_lm += float(lm_loss.cpu()) * len(labels)
+        total_auxiliary += float(auxiliary_loss.cpu()) * len(labels)
         samples += len(labels)
-    return total / max(1, samples)
+    denominator = max(1, samples)
+    return {
+        "total": total / denominator,
+        "language_model": total_lm / denominator,
+        "semantic_classification": total_auxiliary / denominator,
+    }
 
 
 def _parse_label(text: str, class_names: list[str]) -> int:
@@ -237,6 +276,79 @@ def _parse_label(text: str, class_names: list[str]) -> int:
         if re.search(rf"\b{re.escape(name)}\b", text, flags=re.IGNORECASE)
     ]
     return matches[0] if len(matches) == 1 else -1
+
+
+def _classification_metrics(
+    predicted: np.ndarray,
+    labels: np.ndarray,
+    domains: np.ndarray,
+    class_names: list[str],
+) -> dict[str, Any]:
+    num_classes = len(class_names)
+    confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for target, prediction in zip(labels, predicted):
+        if prediction >= 0:
+            confusion[int(target), int(prediction)] += 1
+    class_recalls = {
+        class_names[class_id]: float(
+            np.mean(predicted[labels == class_id] == class_id)
+        )
+        for class_id in range(num_classes)
+    }
+    metrics: dict[str, Any] = {
+        "samples": int(len(labels)),
+        "valid_label_rate": float(np.mean(predicted >= 0)),
+        "accuracy": float(np.mean(predicted == labels)),
+        "balanced_accuracy": float(np.mean(list(class_recalls.values()))),
+        "per_class_recall": class_recalls,
+        "prediction_distribution": {
+            class_names[class_id]: int(np.sum(predicted == class_id))
+            for class_id in range(num_classes)
+        },
+        "invalid_predictions": int(np.sum(predicted < 0)),
+        "confusion_matrix": confusion.tolist(),
+        "domain_metrics": {},
+    }
+    for domain in sorted(int(value) for value in np.unique(domains)):
+        mask = domains == domain
+        metrics["domain_metrics"][str(domain)] = {
+            "samples": int(mask.sum()),
+            "valid_label_rate": float(np.mean(predicted[mask] >= 0)),
+            "accuracy": float(np.mean(predicted[mask] == labels[mask])),
+        }
+    return metrics
+
+
+@torch.inference_mode()
+def _auxiliary_predictions(
+    context: np.ndarray,
+    labels: np.ndarray,
+    domains: np.ndarray,
+    adapter: LowRankContinuousPromptAdapter,
+    class_names: list[str],
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    adapter.eval()
+    predictions = []
+    for start in range(0, len(labels), batch_size):
+        batch = torch.from_numpy(context[start : start + batch_size]).to(
+            device
+        )
+        prompt_tokens = adapter(batch)
+        predictions.append(
+            adapter.classification_logits(prompt_tokens)
+            .argmax(dim=1)
+            .cpu()
+            .numpy()
+        )
+    predicted = np.concatenate(predictions).astype(np.int64)
+    return _classification_metrics(
+        predicted,
+        labels,
+        domains,
+        class_names,
+    )
 
 
 @torch.inference_mode()
@@ -306,43 +418,19 @@ def _generate_predictions(
                 }
             )
     predicted = np.asarray(predictions, dtype=np.int64)
-    num_classes = len(class_names)
-    confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
-    for target, prediction in zip(labels, predicted):
-        if prediction >= 0:
-            confusion[int(target), int(prediction)] += 1
-    class_recalls = {
-        class_names[class_id]: float(
-            np.mean(predicted[labels == class_id] == class_id)
-        )
-        for class_id in range(num_classes)
-    }
-    metrics: dict[str, Any] = {
-        "samples": int(len(labels)),
-        "valid_label_rate": float(np.mean(predicted >= 0)),
-        "accuracy": float(np.mean(predicted == labels)),
-        "balanced_accuracy": float(np.mean(list(class_recalls.values()))),
-        "per_class_recall": class_recalls,
-        "prediction_distribution": {
-            class_names[class_id]: int(np.sum(predicted == class_id))
-            for class_id in range(num_classes)
-        },
-        "invalid_predictions": int(np.sum(predicted < 0)),
-        "confusion_matrix": confusion.tolist(),
-        "domain_metrics": {},
-    }
-    for domain in sorted(int(value) for value in np.unique(domains)):
-        mask = domains == domain
-        metrics["domain_metrics"][str(domain)] = {
-            "samples": int(mask.sum()),
-            "valid_label_rate": float(np.mean(predicted[mask] >= 0)),
-            "accuracy": float(np.mean(predicted[mask] == labels[mask])),
-        }
+    metrics = _classification_metrics(
+        predicted,
+        labels,
+        domains,
+        class_names,
+    )
     return rows, metrics
 
 
 def main() -> int:
     args = parse_args()
+    if args.auxiliary_weight < 0:
+        raise ValueError("--auxiliary-weight must be non-negative.")
     _set_seed(args.seed)
     p2_dir = Path(args.p2_dir)
     output_dir = Path(args.output_dir)
@@ -429,7 +517,13 @@ def main() -> int:
         hidden_size=int(model.config.hidden_size),
         num_prompt_tokens=args.num_prompt_tokens,
         rank=args.adapter_rank,
+        num_classes=len(class_names),
     ).to(device)
+    class_weights = _class_weights(
+        train_arrays["labels"],
+        len(class_names),
+        device,
+    )
     optimizer = torch.optim.AdamW(
         adapter.parameters(),
         lr=args.learning_rate,
@@ -465,11 +559,18 @@ def main() -> int:
         model.train()
         optimizer.zero_grad(set_to_none=True)
         total = 0.0
+        total_lm = 0.0
+        total_auxiliary = 0.0
         samples = 0
         for step, (contexts, labels, _) in enumerate(train_loader):
             contexts = contexts.to(device)
             labels = labels.to(device)
-            inputs_embeds, attention, lm_labels = _training_batch(
+            (
+                inputs_embeds,
+                attention,
+                lm_labels,
+                prompt_embeddings,
+            ) = _training_batch(
                 contexts,
                 labels,
                 adapter,
@@ -478,12 +579,18 @@ def main() -> int:
                 targets,
                 tokenizer.pad_token_id,
             )
-            loss = model(
+            lm_loss = model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention,
                 labels=lm_labels,
                 use_cache=False,
             ).loss
+            auxiliary_loss = torch.nn.functional.cross_entropy(
+                adapter.classification_logits(prompt_embeddings),
+                labels,
+                weight=class_weights,
+            )
+            loss = lm_loss + args.auxiliary_weight * auxiliary_loss
             (loss / args.gradient_accumulation).backward()
             if (
                 (step + 1) % args.gradient_accumulation == 0
@@ -493,8 +600,12 @@ def main() -> int:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             total += float(loss.detach().cpu()) * len(labels)
+            total_lm += float(lm_loss.detach().cpu()) * len(labels)
+            total_auxiliary += (
+                float(auxiliary_loss.detach().cpu()) * len(labels)
+            )
             samples += len(labels)
-        validation_loss = _validation_loss(
+        validation_losses = _validation_loss(
             validation_loader,
             adapter,
             model,
@@ -502,15 +613,29 @@ def main() -> int:
             targets,
             tokenizer.pad_token_id,
             device,
+            class_weights,
+            args.auxiliary_weight,
         )
         row = {
             "epoch": epoch,
             "training_loss": total / max(1, samples),
-            "validation_loss": validation_loss,
+            "training_language_model_loss": (
+                total_lm / max(1, samples)
+            ),
+            "training_semantic_classification_loss": (
+                total_auxiliary / max(1, samples)
+            ),
+            "validation_loss": validation_losses["total"],
+            "validation_language_model_loss": (
+                validation_losses["language_model"]
+            ),
+            "validation_semantic_classification_loss": (
+                validation_losses["semantic_classification"]
+            ),
         }
         history.append(row)
-        if validation_loss < best_loss - 1e-5:
-            best_loss = validation_loss
+        if validation_losses["total"] < best_loss - 1e-5:
+            best_loss = validation_losses["total"]
             best_epoch = epoch
             best_state = copy.deepcopy(adapter.state_dict())
             stale = 0
@@ -534,6 +659,15 @@ def main() -> int:
         class_names,
         args.batch_size,
         args.max_new_tokens,
+        device,
+    )
+    auxiliary_metrics = _auxiliary_predictions(
+        test_context.astype(np.float32),
+        test_arrays["labels"].astype(np.int64),
+        test_arrays["domains"].astype(np.int64),
+        adapter,
+        class_names,
+        args.batch_size,
         device,
     )
     fused_predictions = test_arrays["fused_probabilities"].argmax(axis=1)
@@ -565,6 +699,7 @@ def main() -> int:
             "hidden_size": adapter.hidden_size,
             "num_prompt_tokens": adapter.num_prompt_tokens,
             "rank": adapter.rank,
+            "num_classes": adapter.num_classes,
         },
         "context_mean": torch.from_numpy(context_mean),
         "context_std": torch.from_numpy(context_std),
@@ -580,7 +715,10 @@ def main() -> int:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     summary = {
         "status": "ok",
-        "stage": "P3.1 direct continuous semantic prompt classification",
+        "stage": (
+            "P3.1.1 class-balanced continuous semantic prompt "
+            "classification"
+        ),
         "model": str(args.model),
         "p2_dir": str(p2_dir.resolve()),
         "qwen_frozen": True,
@@ -617,12 +755,24 @@ def main() -> int:
             "epochs_completed": len(history),
             "best_epoch": best_epoch,
             "best_validation_loss": best_loss,
+            "objective": (
+                "language_model_loss + auxiliary_weight * "
+                "class_balanced_semantic_classification_loss"
+            ),
+            "auxiliary_weight": args.auxiliary_weight,
+            "class_weights": [
+                float(value)
+                for value in class_weights.detach().cpu().tolist()
+            ],
             "history": history,
         },
         "continuous_prompt_metrics": prompt_metrics,
+        "training_only_auxiliary_probe_metrics": auxiliary_metrics,
         "upstream_fused_baseline": fused_metrics,
         "note": (
             "This stage isolates direct-vector label generation. "
+            "The auxiliary classifier regularizes prompt tokens during "
+            "training and is not used for the reported Qwen diagnosis. "
             "Auditable explanations remain handled by the validated P3.0.2 "
             "semantic controller."
         ),

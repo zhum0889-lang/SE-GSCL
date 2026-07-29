@@ -79,14 +79,18 @@ class P31ContinuousPromptTests(unittest.TestCase):
             hidden_size=32,
             num_prompt_tokens=4,
             rank=8,
+            num_classes=4,
         )
         context = torch.randn(3, 15)
         tokens = adapter(context)
         self.assertEqual(tokens.shape, (3, 4, 32))
-        tokens.square().mean().backward()
+        logits = adapter.classification_logits(tokens)
+        self.assertEqual(logits.shape, (3, 4))
+        (tokens.square().mean() + logits.square().mean()).backward()
         self.assertIsNotNone(adapter.down.weight.grad)
         self.assertIsNotNone(adapter.up.weight.grad)
         self.assertIsNotNone(adapter.token_codes.grad)
+        self.assertIsNotNone(adapter.semantic_classifier.weight.grad)
 
     def test_loss_backpropagates_through_frozen_decoder_inputs(self) -> None:
         model = _TinyFrozenDecoder().requires_grad_(False)
@@ -96,7 +100,7 @@ class P31ContinuousPromptTests(unittest.TestCase):
             num_prompt_tokens=4,
             rank=8,
         )
-        inputs_embeds, attention, labels = _training_batch(
+        inputs_embeds, attention, labels, prompt_embeddings = _training_batch(
             torch.randn(2, 15),
             torch.tensor([0, 1]),
             adapter,
@@ -105,6 +109,7 @@ class P31ContinuousPromptTests(unittest.TestCase):
             [torch.tensor([4, 5]), torch.tensor([6, 5])],
             pad_token_id=0,
         )
+        self.assertEqual(prompt_embeddings.shape, (2, 4, 24))
         output = model(
             inputs_embeds=inputs_embeds,
             attention_mask=attention,

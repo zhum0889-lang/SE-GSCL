@@ -11,6 +11,7 @@ DTYPE="${DTYPE:-bfloat16}"
 EPOCHS="${EPOCHS:-1}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 GRADIENT_ACCUMULATION="${GRADIENT_ACCUMULATION:-8}"
+AUXILIARY_WEIGHT="${AUXILIARY_WEIGHT:-0.5}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-32}"
 MAX_VALIDATION_SAMPLES="${MAX_VALIDATION_SAMPLES:-16}"
 MAX_TEST_SAMPLES="${MAX_TEST_SAMPLES:-32}"
@@ -88,6 +89,7 @@ OUTPUT_DIR="results/cloud_p31_continuous_prompt/${RUN_ID}_${RUN_LABEL}"
   --epochs "$EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --gradient-accumulation "$GRADIENT_ACCUMULATION" \
+  --auxiliary-weight "$AUXILIARY_WEIGHT" \
   --max-train-samples "$MAX_TRAIN_SAMPLES" \
   --max-validation-samples "$MAX_VALIDATION_SAMPLES" \
   --max-test-samples "$MAX_TEST_SAMPLES" \
