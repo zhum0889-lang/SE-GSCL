@@ -14,5 +14,12 @@ export RANKING_WEIGHT="${RANKING_WEIGHT:-0.5}"
 export RANKING_TEMPERATURE="${RANKING_TEMPERATURE:-0.2}"
 export RESIDUAL_SCALE="${RESIDUAL_SCALE:-0.2}"
 export RESIDUAL_LR_MULTIPLIER="${RESIDUAL_LR_MULTIPLIER:-5.0}"
+export RUN_LABEL="${RUN_LABEL:-full}"
+
+echo "P2.2 configuration:"
+echo "  run_label=$RUN_LABEL"
+echo "  ranking_weight=$RANKING_WEIGHT"
+echo "  adaptive_fusion=$ADAPTIVE_FUSION"
+echo "  residual_scale=$RESIDUAL_SCALE"
 
 exec bash "$ROOT/scripts/run_cloud_p2_local.sh"

@@ -104,7 +104,40 @@ class P22SemanticGuardTests(unittest.TestCase):
         )
         self.assertTrue(np.array_equal(fused.argmax(axis=1), labels))
         self.assertEqual(gate.validation_balanced_accuracy, 1.0)
-        self.assertTrue(np.all(weights >= 0.5))
+        self.assertTrue(np.all(weights >= 0.25))
+        self.assertGreaterEqual(gate.reliability_threshold, 0.0)
+        self.assertLessEqual(float(weights.max()), 0.75)
+
+    def test_validation_gate_falls_back_to_reliable_global_branch(self) -> None:
+        labels = np.asarray([0, 1, 2, 3])
+        global_probabilities = np.asarray(
+            [
+                [0.90, 0.04, 0.03, 0.03],
+                [0.04, 0.90, 0.03, 0.03],
+                [0.03, 0.04, 0.90, 0.03],
+                [0.03, 0.04, 0.03, 0.90],
+            ]
+        )
+        local_probabilities = np.asarray(
+            [
+                [0.40, 0.45, 0.10, 0.05],
+                [0.45, 0.40, 0.10, 0.05],
+                [0.05, 0.10, 0.40, 0.45],
+                [0.05, 0.10, 0.45, 0.40],
+            ]
+        )
+        gate = fit_reliability_gate(
+            global_probabilities,
+            local_probabilities,
+            labels,
+        )
+        weights = gate.local_weights(
+            global_probabilities,
+            local_probabilities,
+        )
+        self.assertTrue(np.allclose(weights, 0.0))
+        self.assertEqual(gate.validation_balanced_accuracy, 1.0)
+        self.assertEqual(gate.global_validation_balanced_accuracy, 1.0)
 
 
 if __name__ == "__main__":

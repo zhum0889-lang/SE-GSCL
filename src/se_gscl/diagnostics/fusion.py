@@ -60,6 +60,11 @@ class ReliabilityGate:
     reliability_threshold: float
     validation_balanced_accuracy: float
     validation_accuracy: float
+    global_validation_balanced_accuracy: float
+    global_validation_accuracy: float
+    local_validation_balanced_accuracy: float
+    local_validation_accuracy: float
+    validation_mean_local_weight: float
 
     def local_weights(
         self,
@@ -94,17 +99,38 @@ def fit_reliability_gate(
     local_probabilities: np.ndarray,
     labels: np.ndarray,
 ) -> ReliabilityGate:
-    """Grid-search a conservative gate on the initial-domain validation set."""
+    """Fit a source-validation gate with a guaranteed global fallback."""
 
     targets = np.asarray(labels, dtype=np.int64)
     num_classes = int(global_probabilities.shape[1])
+    global_predictions = np.asarray(global_probabilities).argmax(axis=1)
+    local_predictions = np.asarray(local_probabilities).argmax(axis=1)
+
+    def classification_metrics(
+        predictions: np.ndarray,
+    ) -> tuple[float, float]:
+        recalls = [
+            float(np.mean(predictions[targets == class_id] == class_id))
+            for class_id in range(num_classes)
+            if np.any(targets == class_id)
+        ]
+        return (
+            float(np.mean(recalls)),
+            float(np.mean(predictions == targets)),
+        )
+
+    global_balanced_accuracy, global_accuracy = classification_metrics(
+        global_predictions
+    )
+    local_balanced_accuracy, local_accuracy = classification_metrics(
+        local_predictions
+    )
     best: tuple[tuple[float, float, float], ReliabilityGate] | None = None
-    for agreement_weight in (0.0, 0.25, 0.5):
-        for override_weight in (0.5, 0.75, 1.0):
+    for agreement_weight in (0.0, 0.25):
+        for override_weight in (0.25, 0.5, 0.75):
             for threshold in (
-                -1.0,
-                -0.10,
                 0.0,
+                0.025,
                 0.05,
                 0.10,
                 0.20,
@@ -116,6 +142,13 @@ def fit_reliability_gate(
                     reliability_threshold=threshold,
                     validation_balanced_accuracy=0.0,
                     validation_accuracy=0.0,
+                    global_validation_balanced_accuracy=(
+                        global_balanced_accuracy
+                    ),
+                    global_validation_accuracy=global_accuracy,
+                    local_validation_balanced_accuracy=local_balanced_accuracy,
+                    local_validation_accuracy=local_accuracy,
+                    validation_mean_local_weight=0.0,
                 )
                 weights = candidate.local_weights(
                     global_probabilities,
@@ -127,23 +160,22 @@ def fit_reliability_gate(
                     weights,
                 )
                 predictions = fused.argmax(axis=1)
-                recalls = [
-                    float(
-                        np.mean(
-                            predictions[targets == class_id] == class_id
-                        )
-                    )
-                    for class_id in range(num_classes)
-                    if np.any(targets == class_id)
-                ]
-                balanced_accuracy = float(np.mean(recalls))
-                accuracy = float(np.mean(predictions == targets))
+                balanced_accuracy, accuracy = classification_metrics(
+                    predictions
+                )
                 calibrated = ReliabilityGate(
                     agreement_weight=agreement_weight,
                     override_weight=override_weight,
                     reliability_threshold=threshold,
                     validation_balanced_accuracy=balanced_accuracy,
                     validation_accuracy=accuracy,
+                    global_validation_balanced_accuracy=(
+                        global_balanced_accuracy
+                    ),
+                    global_validation_accuracy=global_accuracy,
+                    local_validation_balanced_accuracy=local_balanced_accuracy,
+                    local_validation_accuracy=local_accuracy,
+                    validation_mean_local_weight=float(np.mean(weights)),
                 )
                 key = (
                     balanced_accuracy,
