@@ -139,6 +139,91 @@ def parse_diagnostic_json(text: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _requires_uncertainty(packet: dict[str, Any]) -> bool:
+    return (
+        float(packet["normalized_entropy"]) >= 0.60
+        or float(packet["top1_top2_margin"]) <= 0.15
+        or not bool(packet["global_local_agreement"])
+    )
+
+
+def apply_semantic_control(
+    packet: dict[str, Any],
+    parsed: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Repair ontology-checkable fields while preserving LLM explanation."""
+
+    source = dict(parsed) if isinstance(parsed, dict) else {}
+    candidate_ids = {
+        str(row["class_name"]): int(row["class_id"])
+        for row in packet["top_candidates"]
+    }
+    diagnosis = str(source.get("diagnosis", ""))
+    repairs: list[str] = []
+    if diagnosis not in candidate_ids:
+        diagnosis = str(packet["predicted_class_name"])
+        repairs.append("invalid_diagnosis_replaced_with_upstream_top1")
+    diagnosis_class_id = candidate_ids[diagnosis]
+    supporting = [
+        str(row["symptom_name"])
+        for row in packet["top_symptoms"]
+        if int(row["class_id"]) == diagnosis_class_id
+    ]
+    counter = [
+        str(row["symptom_name"])
+        for row in packet["top_symptoms"]
+        if int(row["class_id"]) != diagnosis_class_id
+    ]
+    if source.get("supporting_evidence") != supporting:
+        repairs.append("supporting_evidence_repartitioned")
+    if source.get("counter_evidence") != counter:
+        repairs.append("counter_evidence_repartitioned")
+
+    uncertainty = _requires_uncertainty(packet)
+    if source.get("uncertainty_acknowledged") is not uncertainty:
+        repairs.append("uncertainty_flag_calibrated")
+    confidence = float(packet["confidence"])
+    if uncertainty:
+        confidence_level = "low" if confidence < 0.5 else "medium"
+    else:
+        confidence_level = "high" if confidence >= 0.8 else "medium"
+    if source.get("confidence_level") != confidence_level:
+        repairs.append("confidence_level_calibrated")
+
+    if uncertainty:
+        maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[1]
+    elif diagnosis == "Normal":
+        maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[0]
+    else:
+        maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[2]
+    if source.get("maintenance_action") != maintenance_action:
+        repairs.append("maintenance_action_calibrated")
+
+    support_text = ", ".join(supporting) if supporting else "none"
+    counter_text = ", ".join(counter) if counter else "none"
+    rationale = (
+        f"Diagnosis={diagnosis}; fused confidence={confidence:.4f}; "
+        f"supporting symptoms={support_text}; "
+        f"counter-evidence={counter_text}; "
+        f"uncertainty={'acknowledged' if uncertainty else 'low'}."
+    )
+    explanation = source.get("explanation")
+    if not isinstance(explanation, str) or not explanation.strip():
+        explanation = rationale
+        repairs.append("missing_explanation_replaced")
+    return {
+        "diagnosis": diagnosis,
+        "confidence_level": confidence_level,
+        "supporting_evidence": supporting,
+        "counter_evidence": counter,
+        "explanation": explanation,
+        "auditable_rationale": rationale,
+        "uncertainty_acknowledged": uncertainty,
+        "maintenance_action": maintenance_action,
+        "semantic_control_repairs": repairs,
+    }
+
+
 def select_evaluation_rows(
     rows: Sequence[dict[str, Any]],
     max_samples: int | None,
@@ -209,11 +294,7 @@ def evaluate_llm_outputs(
             str(packet["predicted_class_name"])
             == str(packet["ground_truth_class_name"])
         )
-        requires_uncertainty = (
-            float(packet["normalized_entropy"]) >= 0.60
-            or float(packet["top1_top2_margin"]) <= 0.15
-            or not bool(packet["global_local_agreement"])
-        )
+        requires_uncertainty = _requires_uncertainty(packet)
         uncertainty_required.append(requires_uncertainty)
         if not isinstance(parsed, dict):
             schema_valid.append(False)

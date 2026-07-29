@@ -10,6 +10,7 @@ if str(ROOT / "src") not in sys.path:
 
 from se_gscl.llm import (  # noqa: E402
     ALLOWED_MAINTENANCE_ACTIONS,
+    apply_semantic_control,
     build_diagnostic_messages,
     evaluate_llm_outputs,
     parse_diagnostic_json,
@@ -148,6 +149,43 @@ class P3PromptingTests(unittest.TestCase):
             metrics["maintenance_policy_consistency_rate"],
             0.0,
         )
+
+    def test_semantic_control_repairs_evidence_and_action(self) -> None:
+        packet = _packet()
+        packet["top_symptoms"].append(
+            {
+                "symptom_id": 9,
+                "symptom_name": "Outer-race symptom",
+                "class_id": 3,
+                "probability": 0.2,
+            }
+        )
+        controlled = apply_semantic_control(
+            packet,
+            {
+                "diagnosis": "InnerRace",
+                "confidence_level": "high",
+                "supporting_evidence": ["Outer-race symptom"],
+                "counter_evidence": ["BPFI impact train"],
+                "explanation": "LLM explanation",
+                "uncertainty_acknowledged": False,
+                "maintenance_action": ALLOWED_MAINTENANCE_ACTIONS[0],
+            },
+        )
+        self.assertEqual(
+            controlled["supporting_evidence"],
+            ["BPFI impact train"],
+        )
+        self.assertEqual(
+            controlled["counter_evidence"],
+            ["Outer-race symptom"],
+        )
+        self.assertEqual(
+            controlled["maintenance_action"],
+            ALLOWED_MAINTENANCE_ACTIONS[2],
+        )
+        self.assertEqual(controlled["explanation"], "LLM explanation")
+        self.assertTrue(controlled["semantic_control_repairs"])
 
     def test_unparseable_output_counts_as_end_to_end_failure(self) -> None:
         packet = _packet()

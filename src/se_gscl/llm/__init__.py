@@ -2,6 +2,7 @@
 
 from .prompting import (
     ALLOWED_MAINTENANCE_ACTIONS,
+    apply_semantic_control,
     build_diagnostic_messages,
     evaluate_llm_outputs,
     parse_diagnostic_json,
@@ -10,6 +11,7 @@ from .prompting import (
 
 __all__ = [
     "ALLOWED_MAINTENANCE_ACTIONS",
+    "apply_semantic_control",
     "build_diagnostic_messages",
     "evaluate_llm_outputs",
     "parse_diagnostic_json",

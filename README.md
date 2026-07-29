@@ -384,6 +384,14 @@ evidence use. Maintenance actions are also checked against a conservative
 policy: uncertain cases require verification, confident healthy cases continue
 monitoring, and confident fault cases require scheduled inspection.
 
+P3.0.2 adds a deterministic semantic consistency controller after generation.
+Qwen still selects a diagnosis and writes the natural-language explanation.
+The controller checks only ontology-verifiable fields: candidate validity,
+support/counter-evidence polarity, uncertainty, confidence level, and the
+maintenance policy. Every repair is recorded. Reports preserve both raw LLM
+metrics and controlled-system metrics so reliability gains are not attributed
+to the LLM alone.
+
 Run a 32-sample condition-balanced probe:
 
 ```bash

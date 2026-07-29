@@ -15,6 +15,7 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 from se_gscl.llm import (  # noqa: E402
+    apply_semantic_control,
     build_diagnostic_messages,
     evaluate_llm_outputs,
     parse_diagnostic_json,
@@ -137,16 +138,30 @@ def main() -> int:
             skip_special_tokens=True,
         )
         for row, response in zip(batch_rows, responses):
+            parsed = parse_diagnostic_json(response)
             records.append(
                 {
                     "sample_id": int(row["sample_id"]),
                     "domain_id": int(row["domain_id"]),
                     "packet": row,
                     "llm_raw_output": response,
-                    "parsed_output": parse_diagnostic_json(response),
+                    "parsed_output": parsed,
+                    "controlled_output": apply_semantic_control(row, parsed),
                 }
             )
-    metrics = evaluate_llm_outputs(records)
+    raw_metrics = evaluate_llm_outputs(records)
+    controlled_records = [
+        {
+            **record,
+            "parsed_output": record["controlled_output"],
+        }
+        for record in records
+    ]
+    controlled_metrics = evaluate_llm_outputs(controlled_records)
+    repair_rate = sum(
+        bool(record["controlled_output"]["semantic_control_repairs"])
+        for record in records
+    ) / max(1, len(records))
     with (output_dir / "p3_predictions.jsonl").open(
         "w",
         encoding="utf-8",
@@ -156,7 +171,7 @@ def main() -> int:
     summary = {
         "status": "ok",
         "stage": (
-            "P3.0.1 evidence-polarized frozen-Qwen semantic prompt baseline"
+            "P3.0.2 frozen-Qwen diagnosis with semantic consistency control"
         ),
         "model": str(args.model),
         "p2_dir": str(p2_dir.resolve()),
@@ -174,10 +189,14 @@ def main() -> int:
             "available_samples": len(source_rows),
             "selected_samples": len(rows),
         },
-        "metrics": metrics,
+        "raw_metrics": raw_metrics,
+        "controlled_metrics": {
+            **controlled_metrics,
+            "semantic_control_repair_rate": repair_rate,
+        },
         "next_stage": (
             "Train a continuous semantic prompt adapter and compare it with "
-            "this evidence-audited structured-text baseline."
+            "the raw and controlled structured-text baselines."
         ),
     }
     (output_dir / "p3_report.json").write_text(
