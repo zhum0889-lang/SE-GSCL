@@ -32,6 +32,26 @@ Return exactly one JSON object without Markdown. The schema is:
 }
 """
 
+_CONTINUOUS_SYSTEM_PROMPT = """\
+You are an industrial rolling-bearing diagnosis module. Continuous semantic
+tokens encoding one vibration sample precede the text instruction. Infer the
+fault identity from those tokens, then use only the supplied physical symptom
+evidence to explain the result. Do not infer the diagnosis from a disclosed
+upstream Top-1 label because none is provided. Do not invent frequencies,
+amplitudes, defect severity, or operating conditions.
+
+Return exactly one JSON object without Markdown. The schema is:
+{
+  "diagnosis": "<one allowed fault label>",
+  "confidence_level": "high|medium|low",
+  "supporting_evidence": ["<supplied symptoms associated with diagnosis>"],
+  "counter_evidence": ["<supplied symptoms associated with other classes>"],
+  "explanation": "<concise evidence-linked explanation>",
+  "uncertainty_acknowledged": true,
+  "maintenance_action": "<one allowed action>"
+}
+"""
+
 
 def _probability(value: Any) -> str:
     return f"{100.0 * float(value):.2f}%"
@@ -117,6 +137,76 @@ def build_diagnostic_messages(
     )
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_continuous_diagnostic_messages(
+    packet: dict[str, Any],
+    class_names: Sequence[str],
+) -> list[dict[str, str]]:
+    """Build explanation messages without exposing upstream class scores."""
+
+    symptoms = list(packet["top_symptoms"])
+    allowed_labels = [str(value) for value in class_names]
+    symptom_names = [str(row["symptom_name"]) for row in symptoms]
+    class_name_by_id = {
+        class_id: class_name
+        for class_id, class_name in enumerate(allowed_labels)
+    }
+    symptom_lines = [
+        (
+            f"- {row['symptom_name']}: score={_probability(row['probability'])}, "
+            "associated_class="
+            f"{class_name_by_id.get(int(row['class_id']), 'unknown')}"
+        )
+        for row in symptoms
+    ]
+    user_prompt = "\n".join(
+        [
+            f"Sample: {int(packet['sample_id'])}",
+            f"Condition ID: D{int(packet['domain_id'])}",
+            (
+                "Global/local branch agreement: "
+                f"{bool(packet['global_local_agreement'])}"
+            ),
+            (
+                "Normalized predictive entropy: "
+                f"{float(packet['normalized_entropy']):.4f}"
+            ),
+            (
+                "Top-1/Top-2 probability margin: "
+                f"{float(packet['top1_top2_margin']):.4f}"
+            ),
+            "Available physical symptom evidence:",
+            *(symptom_lines or ["- No reliable symptom evidence supplied."]),
+            "Allowed diagnosis labels: " + json.dumps(allowed_labels),
+            "Allowed evidence strings: " + json.dumps(symptom_names),
+            (
+                "Allowed maintenance actions: "
+                + json.dumps(ALLOWED_MAINTENANCE_ACTIONS)
+            ),
+            (
+                "Infer the diagnosis from the preceding continuous semantic "
+                "tokens. Use a supplied symptom as supporting evidence only "
+                "when its associated_class matches the selected diagnosis; "
+                "otherwise place it in counter_evidence."
+            ),
+            (
+                "Set uncertainty_acknowledged=true when entropy is high, the "
+                "margin is small, or the branches disagree."
+            ),
+            (
+                "Maintenance policy: use verification for uncertain cases; "
+                "continue monitoring only for a confident Normal diagnosis; "
+                "use scheduled inspection for a confident fault. Immediate "
+                "shutdown is unsupported because no severity evidence is "
+                "provided."
+            ),
+        ]
+    )
+    return [
+        {"role": "system", "content": _CONTINUOUS_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 

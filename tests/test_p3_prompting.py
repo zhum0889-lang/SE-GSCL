@@ -11,6 +11,7 @@ if str(ROOT / "src") not in sys.path:
 from se_gscl.llm import (  # noqa: E402
     ALLOWED_MAINTENANCE_ACTIONS,
     apply_semantic_control,
+    build_continuous_diagnostic_messages,
     build_diagnostic_messages,
     evaluate_llm_outputs,
     parse_diagnostic_json,
@@ -64,6 +65,20 @@ class P3PromptingTests(unittest.TestCase):
         self.assertNotIn("ground_truth", text)
         self.assertNotIn("is_correct", text)
         self.assertIn("BPFI impact train", text)
+
+    def test_continuous_prompt_hides_upstream_candidates_and_scores(self) -> None:
+        text = str(
+            build_continuous_diagnostic_messages(
+                _packet(),
+                ["Normal", "InnerRace", "Ball", "OuterRace"],
+            )
+        )
+        self.assertNotIn("Fault candidates", text)
+        self.assertNotIn("fused=", text)
+        self.assertNotIn("global=", text)
+        self.assertNotIn("local=", text)
+        self.assertNotIn("ground_truth", text)
+        self.assertIn("preceding continuous semantic tokens", text)
 
     def test_json_parser_accepts_fenced_response(self) -> None:
         parsed = parse_diagnostic_json(

@@ -3,6 +3,7 @@
 from .prompting import (
     ALLOWED_MAINTENANCE_ACTIONS,
     apply_semantic_control,
+    build_continuous_diagnostic_messages,
     build_diagnostic_messages,
     evaluate_llm_outputs,
     parse_diagnostic_json,
@@ -17,6 +18,7 @@ __all__ = [
     "ALLOWED_MAINTENANCE_ACTIONS",
     "LowRankContinuousPromptAdapter",
     "apply_semantic_control",
+    "build_continuous_diagnostic_messages",
     "build_diagnostic_messages",
     "build_continuous_context",
     "evaluate_llm_outputs",

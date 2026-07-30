@@ -457,6 +457,31 @@ per-condition recall; auxiliary-token separability; and paired disagreements
 between Qwen and the upstream fused classifier. This stage should be completed
 before adding explanation generation or reporting paper-level performance.
 
+## P3.2 continuous-token diagnosis and explanation
+
+P3.2 reuses a predefined P3.1.1 adapter checkpoint and prepends its continuous
+semantic tokens to a structured explanation instruction. The text instruction
+contains the allowed fault ontology, physical symptom evidence, uncertainty
+indicators, and maintenance policy, but deliberately excludes the P2/P3.1
+Top-1 label and candidate probabilities. Fault identity must therefore be read
+from the continuous tokens, while the textual evidence supports auditable
+reasoning and constrained maintenance guidance.
+
+The predefined seed-42 P3.1.1 diagnosis acts as the fallback if explanation
+generation is malformed. The semantic controller validates class-evidence
+consistency, uncertainty acknowledgement, and maintenance policy without
+accessing ground-truth labels. Run a 32-sample explanation probe with:
+
+```bash
+P2_DIR=<current_p2.2_export_directory> \
+P31_DIR=<full_robust_seed42_directory> \
+MAX_SAMPLES=32 \
+bash scripts/run_cloud_p32_continuous_explanations.sh
+```
+
+The report separates raw Qwen output from controlled output and measures
+diagnosis preservation relative to direct continuous-token classification.
+
 Run a 32-sample condition-balanced probe:
 
 ```bash
