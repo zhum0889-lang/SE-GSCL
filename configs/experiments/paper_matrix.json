@@ -1,0 +1,175 @@
+{
+  "name": "se_gscl_paper_matrix",
+  "version": "v1",
+  "seeds": [42, 52, 62],
+  "reporting": {
+    "primary_metric": "balanced_accuracy.final_average_accuracy",
+    "continual_metrics": [
+      "final_average_accuracy",
+      "average_incremental_accuracy",
+      "average_forgetting",
+      "maximum_forgetting",
+      "average_backward_transfer",
+      "average_old_domain_retention"
+    ],
+    "statistics": "mean_std_over_three_seeds",
+    "raw_and_controlled_llm_metrics_separated": true
+  },
+  "datasets": {
+    "cwru4": {
+      "role": "primary",
+      "domain_order": [0, 1, 2, 3],
+      "ontology": "configs/semantics/bearing_faults_4.json",
+      "global_text_cache": "results/semantic_cache/qwen25_7b_bearing4_v1",
+      "symptom_text_cache": "results/semantic_cache/qwen25_7b_bearing4_symptoms_physics_v1",
+      "window_size": 1024,
+      "step_size": 1024,
+      "max_windows_per_file": 24,
+      "replay_per_class": 20
+    },
+    "hustbearing": {
+      "role": "second_dataset",
+      "domain_order": [20, 40, 60, 80],
+      "ontology": "configs/semantics/hustbearing_faults_9.json",
+      "global_text_cache": "results/semantic_cache/qwen25_7b_hust9_v1",
+      "symptom_text_cache": "results/semantic_cache/qwen25_7b_hust9_symptoms_v1",
+      "window_size": 2048,
+      "step_size": 1024,
+      "max_windows_per_file": 60,
+      "replay_per_class": 12
+    }
+  },
+  "p1_common": {
+    "semantic_dim": 256,
+    "num_tokens": 32,
+    "batch_size": 64,
+    "initial_epochs": 20,
+    "continual_epochs": 20,
+    "learning_rate": 0.001,
+    "lambda_cc": 0.1,
+    "lambda_dec": 0.001,
+    "lambda_rel": 1.0
+  },
+  "p1_jobs": [
+    {
+      "id": "finetune",
+      "group": "continual_baseline",
+      "strategy": "sequential",
+      "label": "Sequential fine-tuning"
+    },
+    {
+      "id": "lwf_relation",
+      "group": "continual_baseline",
+      "strategy": "lwf",
+      "label": "LwF-style prototype-relation distillation"
+    },
+    {
+      "id": "experience_replay",
+      "group": "continual_baseline",
+      "strategy": "balanced_replay",
+      "label": "Class-domain balanced experience replay"
+    },
+    {
+      "id": "se_gscl_full",
+      "group": "proposed",
+      "strategy": "full",
+      "label": "SE-GSCL"
+    },
+    {
+      "id": "wo_cross_condition",
+      "group": "p1_ablation",
+      "strategy": "full",
+      "label": "SE-GSCL without cross-condition contrast",
+      "overrides": {
+        "lambda_cc": 0.0
+      }
+    },
+    {
+      "id": "wo_relation",
+      "group": "p1_ablation",
+      "strategy": "full",
+      "label": "SE-GSCL without historical relation preservation",
+      "overrides": {
+        "lambda_rel": 0.0
+      }
+    },
+    {
+      "id": "wo_decorrelation",
+      "group": "p1_ablation",
+      "strategy": "full",
+      "label": "SE-GSCL without fault-condition decorrelation",
+      "overrides": {
+        "lambda_dec": 0.0
+      }
+    }
+  ],
+  "p2_jobs": [
+    {
+      "id": "global_only",
+      "group": "p2_ablation",
+      "adapter_epochs": 0,
+      "local_weight": 0.0
+    },
+    {
+      "id": "weak_local_fixed",
+      "group": "p2_ablation",
+      "adapter_epochs": 15,
+      "local_weight": 0.3
+    },
+    {
+      "id": "physics_fixed",
+      "group": "p2_ablation",
+      "adapter_epochs": 15,
+      "local_weight": 0.3,
+      "physics_guided": true
+    },
+    {
+      "id": "semantic_guard_fixed",
+      "group": "p2_ablation",
+      "adapter_epochs": 15,
+      "local_weight": 0.3,
+      "physics_guided": true,
+      "semantic_guard": true
+    },
+    {
+      "id": "se_gscl_full",
+      "group": "proposed",
+      "adapter_epochs": 15,
+      "local_weight": 0.3,
+      "physics_guided": true,
+      "semantic_guard": true,
+      "adaptive_fusion": true
+    }
+  ],
+  "p3_jobs": [
+    {
+      "id": "structured_text",
+      "group": "p3_baseline",
+      "type": "structured_text"
+    },
+    {
+      "id": "continuous_no_aux",
+      "group": "p3_ablation",
+      "type": "continuous_prompt",
+      "auxiliary_weight": 0.0
+    },
+    {
+      "id": "continuous_full",
+      "group": "proposed",
+      "type": "continuous_prompt",
+      "auxiliary_weight": 0.5
+    },
+    {
+      "id": "explanation_unlocked",
+      "group": "p3_ablation",
+      "type": "continuous_explanation",
+      "unlock_diagnosis": true
+    },
+    {
+      "id": "explanation_locked",
+      "group": "proposed",
+      "type": "continuous_explanation",
+      "unlock_diagnosis": false
+    }
+  ]
+}

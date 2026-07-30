@@ -19,6 +19,7 @@ if str(ROOT / "src") not in sys.path:
 from se_gscl.llm import (  # noqa: E402
     LowRankContinuousPromptAdapter,
     apply_diagnosis_locked_control,
+    apply_semantic_control,
     build_continuous_context,
     build_continuous_diagnostic_messages,
     evaluate_llm_outputs,
@@ -44,6 +45,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-input-tokens", type=int, default=1024)
     parser.add_argument("--max-new-tokens", type=int, default=256)
     parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument(
+        "--unlock-diagnosis",
+        action="store_true",
+        help=(
+            "Ablation: let the explanation pass rediagnose instead of "
+            "preserving the P3.1 direct continuous-token label."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -326,8 +335,10 @@ def main() -> int:
             messages = build_continuous_diagnostic_messages(
                 packet,
                 class_names,
-                locked_diagnosis=str(
-                    direct["predicted_class_name"]
+                locked_diagnosis=(
+                    None
+                    if args.unlock_diagnosis
+                    else str(direct["predicted_class_name"])
                 ),
             )
             prompt = tokenizer.apply_chat_template(
@@ -376,10 +387,14 @@ def main() -> int:
             responses,
         ):
             parsed = parse_diagnostic_json(response)
-            controlled = apply_diagnosis_locked_control(
-                packet,
-                parsed,
-                str(direct["predicted_class_name"]),
+            controlled = (
+                apply_semantic_control(packet, parsed)
+                if args.unlock_diagnosis
+                else apply_diagnosis_locked_control(
+                    packet,
+                    parsed,
+                    str(direct["predicted_class_name"]),
+                )
             )
             repair_counts.update(controlled["semantic_control_repairs"])
             records.append(
@@ -414,7 +429,9 @@ def main() -> int:
     summary = {
         "status": "ok",
         "stage": (
-            "P3.2.1 diagnosis-locked continuous-token explanation"
+            "P3.2.0 unlocked continuous-token explanation ablation"
+            if args.unlock_diagnosis
+            else "P3.2.1 diagnosis-locked continuous-token explanation"
         ),
         "model": str(args.model),
         "p2_dir": str(p2_dir.resolve()),
@@ -425,9 +442,13 @@ def main() -> int:
         "continuous_vector_prompt_enabled": True,
         "text_prompt_exposes_upstream_top1_or_probabilities": False,
         "text_prompt_exposes_ground_truth": False,
-        "text_prompt_exposes_stage1_qwen_diagnosis": True,
+        "text_prompt_exposes_stage1_qwen_diagnosis": (
+            not args.unlock_diagnosis
+        ),
         "diagnosis_lock_source": (
-            "P3.1.1 frozen-Qwen direct continuous-token prediction"
+            None
+            if args.unlock_diagnosis
+            else "P3.1.1 frozen-Qwen direct continuous-token prediction"
         ),
         "selection": {
             "method": "condition-balanced uncertainty stratification",
@@ -454,9 +475,16 @@ def main() -> int:
         },
         "note": (
             "Ground-truth labels are used only after generation. The textual "
-            "prompt supplies ontology, physical evidence, and the preceding "
-            "Qwen continuous-token diagnosis, but does not expose P2 labels, "
-            "candidate probabilities, or ground truth."
+            "prompt supplies ontology and physical evidence"
+            + (
+                ". The unlocked ablation does not expose the preceding Qwen "
+                "diagnosis"
+                if args.unlock_diagnosis
+                else ", together with the preceding Qwen continuous-token "
+                "diagnosis"
+            )
+            + ", and never exposes P2 labels, candidate probabilities, or "
+            "ground truth."
         ),
     }
     (output_dir / "p32_report.json").write_text(

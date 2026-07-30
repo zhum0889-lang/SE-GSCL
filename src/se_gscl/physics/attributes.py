@@ -51,6 +51,16 @@ CWRU_DRIVE_END_KINEMATICS = BearingKinematics(
     name="CWRU drive-end SKF 6205-2RS JEM",
 )
 
+# HUSTbearing uses an ER-16K bearing with nine rolling elements, a 7.94 mm
+# rolling-element diameter, a 39.32 mm pitch diameter, and zero contact angle.
+HUST_ER16K_KINEMATICS = BearingKinematics(
+    bpfi_ratio=5.4087,
+    bpfo_ratio=3.5913,
+    bsf_ratio=2.3751,
+    ftf_ratio=0.3990,
+    name="HUSTbearing ER-16K",
+)
+
 
 @dataclass(frozen=True)
 class PhysicalAttributeBatch:

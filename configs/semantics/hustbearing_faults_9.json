@@ -1,0 +1,267 @@
+{
+  "ontology": "hustbearing_faults_9",
+  "version": "v1",
+  "classes": [
+    {
+      "id": 0,
+      "name": "Healthy",
+      "descriptions": [
+        "The ER-16K rolling bearing is healthy without a localized defect.",
+        "The vibration remains stable and lacks persistent bearing characteristic-frequency impacts.",
+        "No inner-race, outer-race, rolling-element, or compound defect is present."
+      ],
+      "symptoms": [
+        {
+          "id": "healthy_stable",
+          "name": "Stable vibration",
+          "physics_key": "stable_vibration",
+          "description": "The vibration amplitude is stable without a repeating train of localized impacts."
+        },
+        {
+          "id": "healthy_no_peak",
+          "name": "No characteristic-frequency peak",
+          "physics_key": "no_characteristic_peak",
+          "description": "No persistent envelope-spectrum peak is associated with a bearing characteristic frequency."
+        },
+        {
+          "id": "healthy_low_impulse",
+          "name": "Low impulsiveness",
+          "physics_key": "low_impulsiveness",
+          "description": "The signal has low impulsiveness and lacks defect-induced resonance bursts."
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "name": "InnerRace_Medium",
+      "descriptions": [
+        "The bearing has a medium inner-race defect with an approximately 0.15 mm seeded damage size.",
+        "The signal contains moderate repeated impacts near the inner-race ball-pass frequency.",
+        "Shaft-rotation modulation may occur because the inner-race defect moves through the load zone."
+      ],
+      "symptoms": [
+        {
+          "id": "inner_medium_bpfi",
+          "name": "Moderate BPFI impact train",
+          "physics_key": "bpfi_impact_train",
+          "description": "Moderate repeated impacts occur near BPFI and its harmonics."
+        },
+        {
+          "id": "inner_medium_sidebands",
+          "name": "Moderate rotational sidebands",
+          "physics_key": "bpfi_rotational_sidebands",
+          "description": "BPFI components show moderate sidebands related to shaft rotation."
+        },
+        {
+          "id": "inner_medium_resonance",
+          "name": "Moderate inner-race resonance",
+          "physics_key": "inner_resonance_bursts",
+          "description": "Inner-race impacts excite moderate high-frequency resonance bursts."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "InnerRace_Severe",
+      "descriptions": [
+        "The bearing has a severe inner-race defect with an approximately 0.30 mm seeded damage size.",
+        "The vibration exhibits strong BPFI-related impacts and shaft-rotation modulation.",
+        "Severe inner-race damage produces pronounced impulsiveness and resonance excitation."
+      ],
+      "symptoms": [
+        {
+          "id": "inner_severe_bpfi",
+          "name": "Strong BPFI impact train",
+          "physics_key": "bpfi_impact_train",
+          "description": "Strong repeated impacts occur near BPFI and multiple harmonics."
+        },
+        {
+          "id": "inner_severe_sidebands",
+          "name": "Strong rotational sidebands",
+          "physics_key": "bpfi_rotational_sidebands",
+          "description": "BPFI harmonics exhibit pronounced shaft-frequency sidebands."
+        },
+        {
+          "id": "inner_severe_resonance",
+          "name": "Strong inner-race resonance",
+          "physics_key": "inner_resonance_bursts",
+          "description": "Severe inner-race impacts excite strong high-frequency resonance bursts."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "OuterRace_Medium",
+      "descriptions": [
+        "The bearing has a medium outer-race defect with an approximately 0.15 mm seeded damage size.",
+        "The stationary outer-race defect produces moderate periodic impacts near BPFO.",
+        "The impact amplitude is comparatively stable because the defect remains at a fixed location."
+      ],
+      "symptoms": [
+        {
+          "id": "outer_medium_bpfo",
+          "name": "Moderate BPFO impact train",
+          "physics_key": "bpfo_impact_train",
+          "description": "Moderate repeated impacts occur near BPFO and its harmonics."
+        },
+        {
+          "id": "outer_medium_stationary",
+          "name": "Moderate stationary impacts",
+          "physics_key": "bpfo_stationary_amplitude",
+          "description": "The outer-race impact train has a moderately stable amplitude pattern."
+        },
+        {
+          "id": "outer_medium_resonance",
+          "name": "Moderate outer-race resonance",
+          "physics_key": "outer_resonance_bursts",
+          "description": "Outer-race impacts excite moderate high-frequency resonance bursts."
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "OuterRace_Severe",
+      "descriptions": [
+        "The bearing has a severe outer-race defect with an approximately 0.30 mm seeded damage size.",
+        "The vibration contains strong periodic BPFO-related impacts.",
+        "Severe outer-race damage produces pronounced stationary impact and resonance patterns."
+      ],
+      "symptoms": [
+        {
+          "id": "outer_severe_bpfo",
+          "name": "Strong BPFO impact train",
+          "physics_key": "bpfo_impact_train",
+          "description": "Strong repeated impacts occur near BPFO and multiple harmonics."
+        },
+        {
+          "id": "outer_severe_stationary",
+          "name": "Strong stationary impacts",
+          "physics_key": "bpfo_stationary_amplitude",
+          "description": "The stationary outer-race defect produces a strong and regular impact-amplitude pattern."
+        },
+        {
+          "id": "outer_severe_resonance",
+          "name": "Strong outer-race resonance",
+          "physics_key": "outer_resonance_bursts",
+          "description": "Severe outer-race impacts excite strong high-frequency resonance bursts."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Ball_Medium",
+      "descriptions": [
+        "The bearing has a medium rolling-element defect with an approximately 0.25 mm seeded damage size.",
+        "The signal contains moderate components near the ball spin frequency.",
+        "Impact amplitude varies as the damaged rolling element enters and leaves the load zone."
+      ],
+      "symptoms": [
+        {
+          "id": "ball_medium_bsf",
+          "name": "Moderate ball-spin components",
+          "physics_key": "bsf_components",
+          "description": "Moderate spectral components occur near the ball spin frequency and its harmonics."
+        },
+        {
+          "id": "ball_medium_modulation",
+          "name": "Moderate load-zone modulation",
+          "physics_key": "bsf_load_zone_modulation",
+          "description": "Ball-spin components show moderate modulation as the damaged ball crosses the load zone."
+        },
+        {
+          "id": "ball_medium_irregular",
+          "name": "Moderate irregular impacts",
+          "physics_key": "irregular_impacts",
+          "description": "The rolling-element defect produces moderately irregular impact intervals."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Ball_Severe",
+      "descriptions": [
+        "The bearing has a severe rolling-element defect with an approximately 0.50 mm seeded damage size.",
+        "The signal exhibits strong ball-spin components and load-zone modulation.",
+        "Severe rolling-element damage produces pronounced irregular impacts and resonance excitation."
+      ],
+      "symptoms": [
+        {
+          "id": "ball_severe_bsf",
+          "name": "Strong ball-spin components",
+          "physics_key": "bsf_components",
+          "description": "Strong spectral components occur near the ball spin frequency and multiple harmonics."
+        },
+        {
+          "id": "ball_severe_modulation",
+          "name": "Strong load-zone modulation",
+          "physics_key": "bsf_load_zone_modulation",
+          "description": "Ball-spin components show strong modulation related to load-zone motion."
+        },
+        {
+          "id": "ball_severe_irregular",
+          "name": "Strong irregular impacts",
+          "physics_key": "irregular_impacts",
+          "description": "Severe rolling-element damage produces strong non-stationary impact intervals."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Compound_Medium",
+      "descriptions": [
+        "The bearing has simultaneous medium inner-race and outer-race defects.",
+        "The vibration contains both moderate BPFI-related and BPFO-related impact components.",
+        "The compound defect produces mixed modulation and resonance evidence from both raceways."
+      ],
+      "symptoms": [
+        {
+          "id": "compound_medium_bpfi",
+          "name": "Moderate compound BPFI components",
+          "physics_key": "bpfi_impact_train",
+          "description": "Moderate inner-race characteristic-frequency impacts are present in the compound fault."
+        },
+        {
+          "id": "compound_medium_bpfo",
+          "name": "Moderate compound BPFO components",
+          "physics_key": "bpfo_impact_train",
+          "description": "Moderate outer-race characteristic-frequency impacts are present in the compound fault."
+        },
+        {
+          "id": "compound_medium_resonance",
+          "name": "Moderate mixed resonance",
+          "physics_key": "outer_resonance_bursts",
+          "description": "The combined raceway impacts excite moderate mixed high-frequency resonance bursts."
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Compound_Severe",
+      "descriptions": [
+        "The bearing has simultaneous severe inner-race and outer-race defects.",
+        "The vibration contains strong BPFI-related and BPFO-related impact components.",
+        "The severe compound defect produces pronounced mixed modulation, impulsiveness, and resonance evidence."
+      ],
+      "symptoms": [
+        {
+          "id": "compound_severe_bpfi",
+          "name": "Strong compound BPFI components",
+          "physics_key": "bpfi_impact_train",
+          "description": "Strong inner-race characteristic-frequency impacts are present in the compound fault."
+        },
+        {
+          "id": "compound_severe_bpfo",
+          "name": "Strong compound BPFO components",
+          "physics_key": "bpfo_impact_train",
+          "description": "Strong outer-race characteristic-frequency impacts are present in the compound fault."
+        },
+        {
+          "id": "compound_severe_resonance",
+          "name": "Strong mixed resonance",
+          "physics_key": "inner_resonance_bursts",
+          "description": "The combined severe raceway impacts excite strong mixed high-frequency resonance bursts."
+        }
+      ]
+    }
+  ]
+}

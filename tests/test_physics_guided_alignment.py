@@ -16,6 +16,7 @@ from se_gscl.losses import physics_guided_local_alignment_loss  # noqa: E402
 from se_gscl.models import LocalSymptomMatcher  # noqa: E402
 from se_gscl.physics import (  # noqa: E402
     CWRU_DRIVE_END_KINEMATICS,
+    HUST_ER16K_KINEMATICS,
     PHYSICS_KEYS,
     RobustAttributeCalibrator,
     build_symptom_soft_targets,
@@ -28,6 +29,12 @@ from se_gscl.semantics import (  # noqa: E402
 
 
 class PhysicsGuidedAlignmentTests(unittest.TestCase):
+    def test_hust_er16k_characteristic_frequency_ratios(self) -> None:
+        self.assertAlmostEqual(HUST_ER16K_KINEMATICS.bpfi_ratio, 5.4087)
+        self.assertAlmostEqual(HUST_ER16K_KINEMATICS.bpfo_ratio, 3.5913)
+        self.assertAlmostEqual(HUST_ER16K_KINEMATICS.bsf_ratio, 2.3751)
+        self.assertAlmostEqual(HUST_ER16K_KINEMATICS.ftf_ratio, 0.3990)
+
     def test_bpfo_modulation_activates_outer_race_attribute(self) -> None:
         sampling_rate = 12000.0
         speed_rpm = 1800.0

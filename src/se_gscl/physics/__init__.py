@@ -1,5 +1,6 @@
 from .attributes import (
     CWRU_DRIVE_END_KINEMATICS,
+    HUST_ER16K_KINEMATICS,
     PHYSICS_KEYS,
     BearingKinematics,
     PhysicalAttributeBatch,
@@ -10,6 +11,7 @@ from .attributes import (
 
 __all__ = [
     "CWRU_DRIVE_END_KINEMATICS",
+    "HUST_ER16K_KINEMATICS",
     "PHYSICS_KEYS",
     "BearingKinematics",
     "PhysicalAttributeBatch",

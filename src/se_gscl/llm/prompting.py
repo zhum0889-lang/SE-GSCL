@@ -79,6 +79,30 @@ def _probability(value: Any) -> str:
     return f"{100.0 * float(value):.2f}%"
 
 
+def _is_healthy_label(label: str) -> bool:
+    normalized = str(label).strip().lower().replace("_", "")
+    return normalized in {"normal", "healthy", "health"}
+
+
+def _is_severe_label(label: str) -> bool:
+    return "severe" in str(label).strip().lower()
+
+
+def _maintenance_action(
+    diagnosis: str,
+    *,
+    uncertainty: bool,
+    confidence_level: str,
+) -> str:
+    if uncertainty or confidence_level != "high":
+        return ALLOWED_MAINTENANCE_ACTIONS[1]
+    if _is_healthy_label(diagnosis):
+        return ALLOWED_MAINTENANCE_ACTIONS[0]
+    if _is_severe_label(diagnosis):
+        return ALLOWED_MAINTENANCE_ACTIONS[3]
+    return ALLOWED_MAINTENANCE_ACTIONS[2]
+
+
 def build_diagnostic_messages(
     packet: dict[str, Any],
 ) -> list[dict[str, str]]:
@@ -150,10 +174,11 @@ def build_diagnostic_messages(
             ),
             (
                 "Maintenance policy: use verification for uncertain cases; "
-                "continue monitoring only for a confident Normal diagnosis; "
-                "use scheduled inspection for a confident fault. Immediate "
-                "shutdown is unsupported because no severity evidence is "
-                "provided."
+                "continue monitoring only for a confident healthy/normal "
+                "diagnosis; use scheduled inspection for a confident fault, "
+                "and immediate inspection only for a confident diagnosis "
+                "whose supplied class label explicitly indicates severe "
+                "damage."
             ),
         ]
     )
@@ -269,10 +294,11 @@ def build_continuous_diagnostic_messages(
             ),
             (
                 "Maintenance policy: use verification for uncertain cases; "
-                "continue monitoring only for a confident Normal diagnosis; "
-                "use scheduled inspection for a confident fault. Immediate "
-                "shutdown is unsupported because no severity evidence is "
-                "provided."
+                "continue monitoring only for a confident healthy/normal "
+                "diagnosis; use scheduled inspection for a confident fault, "
+                "and immediate inspection only for a confident diagnosis "
+                "whose supplied class label explicitly indicates severe "
+                "damage."
             ),
             *required_lines,
         ]
@@ -352,12 +378,11 @@ def apply_semantic_control(
     if source.get("confidence_level") != confidence_level:
         repairs.append("confidence_level_calibrated")
 
-    if uncertainty or confidence_level != "high":
-        maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[1]
-    elif diagnosis == "Normal":
-        maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[0]
-    else:
-        maintenance_action = ALLOWED_MAINTENANCE_ACTIONS[2]
+    maintenance_action = _maintenance_action(
+        diagnosis,
+        uncertainty=uncertainty,
+        confidence_level=confidence_level,
+    )
     if source.get("maintenance_action") != maintenance_action:
         repairs.append("maintenance_action_calibrated")
 
@@ -569,12 +594,11 @@ def evaluate_llm_outputs(
         maintenance_valid.append(
             maintenance_action in ALLOWED_MAINTENANCE_ACTIONS
         )
-        if requires_uncertainty or parsed.get("confidence_level") != "high":
-            expected_action = ALLOWED_MAINTENANCE_ACTIONS[1]
-        elif diagnosis == "Normal":
-            expected_action = ALLOWED_MAINTENANCE_ACTIONS[0]
-        else:
-            expected_action = ALLOWED_MAINTENANCE_ACTIONS[2]
+        expected_action = _maintenance_action(
+            diagnosis,
+            uncertainty=requires_uncertainty,
+            confidence_level=str(parsed.get("confidence_level", "")),
+        )
         maintenance_policy_consistent.append(
             maintenance_action == expected_action
         )

@@ -235,6 +235,34 @@ class P3PromptingTests(unittest.TestCase):
             ALLOWED_MAINTENANCE_ACTIONS[1],
         )
 
+    def test_hust_healthy_and_severe_labels_use_correct_policy(self) -> None:
+        healthy = _packet()
+        healthy["predicted_class_id"] = 0
+        healthy["predicted_class_name"] = "Healthy"
+        healthy["top_candidates"][0]["class_id"] = 0
+        healthy["top_candidates"][0]["class_name"] = "Healthy"
+        healthy["top_symptoms"][0]["class_id"] = 0
+        controlled = apply_semantic_control(
+            healthy,
+            {"diagnosis": "Healthy", "explanation": "stable"},
+        )
+        self.assertEqual(
+            controlled["maintenance_action"],
+            ALLOWED_MAINTENANCE_ACTIONS[0],
+        )
+
+        severe = _packet()
+        severe["predicted_class_name"] = "InnerRace_Severe"
+        severe["top_candidates"][0]["class_name"] = "InnerRace_Severe"
+        controlled = apply_semantic_control(
+            severe,
+            {"diagnosis": "InnerRace_Severe", "explanation": "severe fault"},
+        )
+        self.assertEqual(
+            controlled["maintenance_action"],
+            ALLOWED_MAINTENANCE_ACTIONS[3],
+        )
+
     def test_locked_control_restores_direct_vector_diagnosis(self) -> None:
         controlled = apply_diagnosis_locked_control(
             _packet(),

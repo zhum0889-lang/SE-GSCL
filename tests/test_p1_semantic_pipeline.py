@@ -130,7 +130,12 @@ class P1SemanticPipelineTests(unittest.TestCase):
         summary = summarize_accuracy_matrix(matrix)
         self.assertAlmostEqual(summary["final_average_accuracy"], 0.85)
         self.assertAlmostEqual(summary["average_forgetting"], 0.05)
+        self.assertAlmostEqual(summary["maximum_forgetting"], 0.05)
         self.assertAlmostEqual(summary["average_backward_transfer"], -0.05)
+        self.assertAlmostEqual(
+            summary["average_old_domain_retention"],
+            (0.75 / 0.80 + 0.85 / 0.90) / 2.0,
+        )
         np.testing.assert_allclose(
             summary["stage_seen_average"],
             [0.80, 0.80, 0.85],

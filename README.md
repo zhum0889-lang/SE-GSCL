@@ -12,6 +12,11 @@ https://github.com/zhum0889-lang/SE-GSCL
 Cloud deployment and update commands are documented in
 `CLOUD_UPLOAD_RUNBOOK_ZH.md`.
 
+The paper-level two-dataset, three-seed experiment matrix is defined in
+`configs/experiments/paper_matrix.json`. Reproducible P1/P2/P3 commands,
+continual-learning metrics, ablations, and result aggregation are documented
+in `PAPER_EXPERIMENT_MATRIX_ZH.md`.
+
 ## P0 protocol fixes
 
 - leakage-resistant file-group split with guarded blocked fallback for CWRU;

@@ -36,6 +36,8 @@ from se_gscl.losses import (  # noqa: E402
 from se_gscl.models import LocalSymptomMatcher, SEGSCLSpecialist  # noqa: E402
 from se_gscl.physics import (  # noqa: E402
     CWRU_DRIVE_END_KINEMATICS,
+    HUST_ER16K_KINEMATICS,
+    BearingKinematics,
     RobustAttributeCalibrator,
     build_symptom_soft_targets,
     extract_physical_attributes,
@@ -154,12 +156,25 @@ def _set_seed(seed: int) -> None:
 def _extract_physics(
     dataset: dict[str, object],
     physics_keys: tuple[str, ...],
+    kinematics: BearingKinematics,
 ):
     return extract_physical_attributes(
         np.asarray(dataset["x"], dtype=np.float32),
         np.asarray(dataset["sampling_rate"], dtype=np.float32),
         np.asarray(dataset["speed_rpm"], dtype=np.float32),
         physics_keys=physics_keys,
+        kinematics=kinematics,
+    )
+
+
+def _dataset_kinematics(dataset: str) -> BearingKinematics:
+    if dataset in {"cwru4", "cwru10"}:
+        return CWRU_DRIVE_END_KINEMATICS
+    if dataset == "hustbearing":
+        return HUST_ER16K_KINEMATICS
+    raise ValueError(
+        "Physics-guided P2 requires validated bearing kinematics. "
+        f"No kinematics are registered for dataset={dataset!r}."
     )
 
 
@@ -423,11 +438,11 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     report = json.loads((p1_dir / "p1_report.json").read_text(encoding="utf-8"))
-    if args.physics_guided and str(report["dataset"]) not in {"cwru4", "cwru10"}:
-        raise ValueError(
-            "P2.1 currently has validated bearing kinematics only for CWRU. "
-            "Add the target dataset's bearing geometry before enabling it."
-        )
+    kinematics = (
+        _dataset_kinematics(str(report["dataset"]))
+        if args.physics_guided
+        else CWRU_DRIVE_END_KINEMATICS
+    )
     if "model_config" not in report:
         raise ValueError(
             "The P1 report predates P2 metadata. Rerun P1 with the current code."
@@ -544,6 +559,7 @@ def main() -> int:
         initial_raw_attributes = _extract_physics(
             normalized_train[domains[0]],
             symptom_cache.physics_keys,
+            kinematics,
         )
         calibrator = RobustAttributeCalibrator.fit(initial_raw_attributes)
         calibrator.save(output_dir / "physics_calibrator.json")
@@ -556,6 +572,7 @@ def main() -> int:
                 _extract_physics(
                     normalized_train[domain],
                     symptom_cache.physics_keys,
+                    kinematics,
                 )
             )
             train_targets, train_weights = build_symptom_soft_targets(
@@ -572,6 +589,7 @@ def main() -> int:
                 _extract_physics(
                     normalized_val[domain],
                     symptom_cache.physics_keys,
+                    kinematics,
                 )
             )
             val_targets, val_weights = build_symptom_soft_targets(
@@ -588,6 +606,7 @@ def main() -> int:
                 _extract_physics(
                     normalized_test[domain],
                     symptom_cache.physics_keys,
+                    kinematics,
                 )
             )
             test_targets, test_weights = build_symptom_soft_targets(
@@ -1033,11 +1052,11 @@ def main() -> int:
         "physics_keys": symptom_cache.physics_keys,
         "bearing_kinematics": (
             {
-                "name": CWRU_DRIVE_END_KINEMATICS.name,
-                "bpfi_ratio": CWRU_DRIVE_END_KINEMATICS.bpfi_ratio,
-                "bpfo_ratio": CWRU_DRIVE_END_KINEMATICS.bpfo_ratio,
-                "bsf_ratio": CWRU_DRIVE_END_KINEMATICS.bsf_ratio,
-                "ftf_ratio": CWRU_DRIVE_END_KINEMATICS.ftf_ratio,
+                "name": kinematics.name,
+                "bpfi_ratio": kinematics.bpfi_ratio,
+                "bpfo_ratio": kinematics.bpfo_ratio,
+                "bsf_ratio": kinematics.bsf_ratio,
+                "ftf_ratio": kinematics.ftf_ratio,
             }
             if args.physics_guided
             else None

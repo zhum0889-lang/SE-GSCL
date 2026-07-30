@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domains", default="0,1")
     parser.add_argument(
         "--strategy",
-        choices=("sequential", "balanced_replay", "full"),
+        choices=("sequential", "lwf", "balanced_replay", "full"),
         default="full",
     )
     parser.add_argument("--window-size", type=int, default=1024)
@@ -414,12 +414,15 @@ def main() -> int:
         text_cache,
         semantic_dim=args.semantic_dim,
     ).to(device)
+    decorrelation_enabled = args.strategy == "full"
     initial_trainer = GlobalSemanticTrainer(
         model,
         projected_bank,
         P1LossWeights(
             global_alignment=1.0,
-            decorrelation=args.lambda_dec,
+            decorrelation=(
+                args.lambda_dec if decorrelation_enabled else 0.0
+            ),
         ),
         device=device,
     )
@@ -483,17 +486,40 @@ def main() -> int:
     )
     torch.save(model.state_dict(), output_dir / f"specialist_after_domain_{domains[0]}.pt")
 
-    memory = _select_balanced_memory(
-        initial_train,
-        args.replay_per_class,
-        args.seed,
-    ) if args.strategy != "sequential" else None
+    uses_replay = args.strategy in {"balanced_replay", "full"}
+    memory = (
+        _select_balanced_memory(
+            initial_train,
+            args.replay_per_class,
+            args.seed,
+        )
+        if uses_replay
+        else None
+    )
 
     for stage_index, domain in enumerate(domains[1:], start=1):
         current = _as_window_dataset(train_by_domain[domain])
-        relation_enabled = args.strategy == "full"
-        if args.strategy == "sequential":
-            continual_train = current
+        replay_relation_enabled = args.strategy == "full"
+        current_relation_enabled = args.strategy == "lwf"
+        cross_condition_enabled = args.strategy == "full"
+        if args.strategy in {"sequential", "lwf"}:
+            if current_relation_enabled:
+                _, current_snapshot_probs = _predict(
+                    model,
+                    frozen_bank.prototypes,
+                    current,
+                    device,
+                    args.batch_size,
+                )
+                continual_train = WindowDataset(
+                    current.x.numpy(),
+                    current.labels.numpy(),
+                    current.domains.numpy(),
+                    current.sample_ids.numpy(),
+                    snapshot_probs=current_snapshot_probs,
+                )
+            else:
+                continual_train = current
             continual_loader = _balanced_loader(
                 continual_train,
                 args.batch_size,
@@ -507,7 +533,7 @@ def main() -> int:
             combined_labels = torch.cat([current.labels, memory.labels]).numpy()
             combined_domains = torch.cat([current.domains, memory.domains]).numpy()
             combined_ids = torch.cat([current.sample_ids, memory.sample_ids]).numpy()
-            if relation_enabled:
+            if replay_relation_enabled:
                 _, old_probs = _predict(
                     model,
                     frozen_bank.prototypes,
@@ -566,9 +592,17 @@ def main() -> int:
             frozen_bank.prototypes,
             P1LossWeights(
                 global_alignment=1.0,
-                cross_condition=args.lambda_cc if relation_enabled else 0.0,
-                decorrelation=args.lambda_dec,
-                global_relation=args.lambda_rel if relation_enabled else 0.0,
+                cross_condition=(
+                    args.lambda_cc if cross_condition_enabled else 0.0
+                ),
+                decorrelation=(
+                    args.lambda_dec if decorrelation_enabled else 0.0
+                ),
+                global_relation=(
+                    args.lambda_rel
+                    if replay_relation_enabled or current_relation_enabled
+                    else 0.0
+                ),
             ),
             device=device,
         )
@@ -720,6 +754,20 @@ def main() -> int:
             "lambda_cross_condition": args.lambda_cc,
             "lambda_decorrelation": args.lambda_dec,
             "lambda_global_relation": args.lambda_rel,
+            "effective_continual_loss_weights": {
+                "global_alignment": 1.0,
+                "cross_condition": (
+                    args.lambda_cc if args.strategy == "full" else 0.0
+                ),
+                "decorrelation": (
+                    args.lambda_dec if args.strategy == "full" else 0.0
+                ),
+                "global_relation": (
+                    args.lambda_rel
+                    if args.strategy in {"lwf", "full"}
+                    else 0.0
+                ),
+            },
             "seed": args.seed,
         },
         "normalization": stats.to_dict(),

@@ -38,16 +38,33 @@ def summarize_accuracy_matrix(matrix: np.ndarray) -> dict[str, object]:
             for stage_index in range(num_domains)
         ]
     )
+    old_learned = learned[:-1]
+    old_final = final[:-1]
+    retention = (
+        np.divide(
+            old_final,
+            old_learned,
+            out=np.zeros_like(old_final),
+            where=np.abs(old_learned) > 1e-12,
+        )
+        if num_domains > 1
+        else np.ones(1, dtype=np.float64)
+    )
     return {
         "final_average_accuracy": float(np.mean(final)),
         "average_incremental_accuracy": float(np.mean(stage_seen_averages)),
         "average_forgetting": float(np.mean(forgetting[:-1]))
         if num_domains > 1
         else 0.0,
+        "maximum_forgetting": float(np.max(forgetting[:-1]))
+        if num_domains > 1
+        else 0.0,
         "average_backward_transfer": float(np.mean(backward_transfer)),
+        "average_old_domain_retention": float(np.mean(retention)),
         "final_by_domain": final.tolist(),
         "learned_by_domain": learned.tolist(),
         "forgetting_by_domain": forgetting.tolist(),
         "backward_transfer_by_old_domain": backward_transfer.tolist(),
+        "retention_by_old_domain": retention.tolist(),
         "stage_seen_average": stage_seen_averages.tolist(),
     }
