@@ -2,6 +2,7 @@
 
 from .prompting import (
     ALLOWED_MAINTENANCE_ACTIONS,
+    apply_diagnosis_locked_control,
     apply_semantic_control,
     build_continuous_diagnostic_messages,
     build_diagnostic_messages,
@@ -17,6 +18,7 @@ from .continuous_prompt import (
 __all__ = [
     "ALLOWED_MAINTENANCE_ACTIONS",
     "LowRankContinuousPromptAdapter",
+    "apply_diagnosis_locked_control",
     "apply_semantic_control",
     "build_continuous_diagnostic_messages",
     "build_diagnostic_messages",

@@ -52,6 +52,28 @@ Return exactly one JSON object without Markdown. The schema is:
 }
 """
 
+_LOCKED_EXPLANATION_SYSTEM_PROMPT = """\
+You are the explanation stage of an industrial rolling-bearing diagnosis
+pipeline. A preceding frozen-LLM stage has already inferred the fault identity
+from continuous semantic tokens. Preserve that diagnosis exactly. Your task is
+to verbalize the supplied, ontology-checked evidence and uncertainty state.
+Do not rediagnose the sample. Do not invent frequencies, amplitudes, defect
+severity, or operating conditions.
+
+Return exactly one JSON object without Markdown using the supplied required
+field values and a concise evidence-linked explanation.
+The schema is:
+{
+  "diagnosis": "<required stage-1 diagnosis>",
+  "confidence_level": "<required confidence level>",
+  "supporting_evidence": ["<required supporting evidence>"],
+  "counter_evidence": ["<required counter evidence>"],
+  "explanation": "<concise evidence-linked explanation>",
+  "uncertainty_acknowledged": "<required boolean>",
+  "maintenance_action": "<required maintenance action>"
+}
+"""
+
 
 def _probability(value: Any) -> str:
     return f"{100.0 * float(value):.2f}%"
@@ -144,6 +166,7 @@ def build_diagnostic_messages(
 def build_continuous_diagnostic_messages(
     packet: dict[str, Any],
     class_names: Sequence[str],
+    locked_diagnosis: str | None = None,
 ) -> list[dict[str, str]]:
     """Build explanation messages without exposing upstream class scores."""
 
@@ -162,6 +185,54 @@ def build_continuous_diagnostic_messages(
         )
         for row in symptoms
     ]
+    required_lines: list[str] = []
+    system_prompt = _CONTINUOUS_SYSTEM_PROMPT
+    if locked_diagnosis is not None:
+        locked_diagnosis = str(locked_diagnosis)
+        if locked_diagnosis not in allowed_labels:
+            raise ValueError("Locked diagnosis must be an allowed label.")
+        required = apply_semantic_control(
+            packet,
+            {
+                "diagnosis": locked_diagnosis,
+                "explanation": "placeholder",
+            },
+        )
+        required_lines = [
+            (
+                "Stage-1 direct continuous-token diagnosis: "
+                f"{locked_diagnosis}"
+            ),
+            (
+                "The diagnosis field must remain exactly: "
+                f"{locked_diagnosis}"
+            ),
+            (
+                "Required confidence_level: "
+                f"{required['confidence_level']}"
+            ),
+            (
+                "Required supporting_evidence: "
+                + json.dumps(required["supporting_evidence"])
+            ),
+            (
+                "Required counter_evidence: "
+                + json.dumps(required["counter_evidence"])
+            ),
+            (
+                "Required uncertainty_acknowledged: "
+                + json.dumps(required["uncertainty_acknowledged"])
+            ),
+            (
+                "Required maintenance_action: "
+                f"{required['maintenance_action']}"
+            ),
+            (
+                "Use these required fields unchanged and generate only the "
+                "evidence-linked explanation around them."
+            ),
+        ]
+        system_prompt = _LOCKED_EXPLANATION_SYSTEM_PROMPT
     user_prompt = "\n".join(
         [
             f"Sample: {int(packet['sample_id'])}",
@@ -203,10 +274,11 @@ def build_continuous_diagnostic_messages(
                 "shutdown is unsupported because no severity evidence is "
                 "provided."
             ),
+            *required_lines,
         ]
     )
     return [
-        {"role": "system", "content": _CONTINUOUS_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -312,6 +384,25 @@ def apply_semantic_control(
         "maintenance_action": maintenance_action,
         "semantic_control_repairs": repairs,
     }
+
+
+def apply_diagnosis_locked_control(
+    packet: dict[str, Any],
+    parsed: dict[str, Any] | None,
+    locked_diagnosis: str,
+) -> dict[str, Any]:
+    """Apply semantic control while preserving the direct-vector diagnosis."""
+
+    source = dict(parsed) if isinstance(parsed, dict) else {}
+    original_diagnosis = str(source.get("diagnosis", ""))
+    source["diagnosis"] = str(locked_diagnosis)
+    controlled = apply_semantic_control(packet, source)
+    if original_diagnosis != str(locked_diagnosis):
+        controlled["semantic_control_repairs"].insert(
+            0,
+            "diagnosis_restored_to_direct_prompt",
+        )
+    return controlled
 
 
 def select_evaluation_rows(

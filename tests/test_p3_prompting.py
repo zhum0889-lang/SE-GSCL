@@ -10,6 +10,7 @@ if str(ROOT / "src") not in sys.path:
 
 from se_gscl.llm import (  # noqa: E402
     ALLOWED_MAINTENANCE_ACTIONS,
+    apply_diagnosis_locked_control,
     apply_semantic_control,
     build_continuous_diagnostic_messages,
     build_diagnostic_messages,
@@ -79,6 +80,28 @@ class P3PromptingTests(unittest.TestCase):
         self.assertNotIn("local=", text)
         self.assertNotIn("ground_truth", text)
         self.assertIn("preceding continuous semantic tokens", text)
+
+    def test_locked_explanation_prompt_preserves_stage1_diagnosis(self) -> None:
+        text = str(
+            build_continuous_diagnostic_messages(
+                _packet(),
+                ["Normal", "InnerRace", "Ball", "OuterRace"],
+                locked_diagnosis="InnerRace",
+            )
+        )
+        self.assertIn(
+            "Stage-1 direct continuous-token diagnosis: InnerRace",
+            text,
+        )
+        self.assertIn(
+            "The diagnosis field must remain exactly: InnerRace",
+            text,
+        )
+        self.assertIn(
+            "Required supporting_evidence",
+            text,
+        )
+        self.assertNotIn("fused=", text)
 
     def test_json_parser_accepts_fenced_response(self) -> None:
         parsed = parse_diagnostic_json(
@@ -210,6 +233,26 @@ class P3PromptingTests(unittest.TestCase):
         self.assertEqual(
             controlled["maintenance_action"],
             ALLOWED_MAINTENANCE_ACTIONS[1],
+        )
+
+    def test_locked_control_restores_direct_vector_diagnosis(self) -> None:
+        controlled = apply_diagnosis_locked_control(
+            _packet(),
+            {
+                "diagnosis": "OuterRace",
+                "confidence_level": "high",
+                "supporting_evidence": [],
+                "counter_evidence": [],
+                "explanation": "Generated explanation",
+                "uncertainty_acknowledged": False,
+                "maintenance_action": ALLOWED_MAINTENANCE_ACTIONS[2],
+            },
+            "InnerRace",
+        )
+        self.assertEqual(controlled["diagnosis"], "InnerRace")
+        self.assertIn(
+            "diagnosis_restored_to_direct_prompt",
+            controlled["semantic_control_repairs"],
         )
 
     def test_unparseable_output_counts_as_end_to_end_failure(self) -> None:

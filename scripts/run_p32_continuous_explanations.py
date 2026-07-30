@@ -18,7 +18,7 @@ if str(ROOT / "src") not in sys.path:
 
 from se_gscl.llm import (  # noqa: E402
     LowRankContinuousPromptAdapter,
-    apply_semantic_control,
+    apply_diagnosis_locked_control,
     build_continuous_context,
     build_continuous_diagnostic_messages,
     evaluate_llm_outputs,
@@ -299,6 +299,9 @@ def main() -> int:
             messages = build_continuous_diagnostic_messages(
                 packet,
                 class_names,
+                locked_diagnosis=str(
+                    direct["predicted_class_name"]
+                ),
             )
             prompt = tokenizer.apply_chat_template(
                 messages,
@@ -346,7 +349,11 @@ def main() -> int:
             responses,
         ):
             parsed = parse_diagnostic_json(response)
-            controlled = apply_semantic_control(packet, parsed)
+            controlled = apply_diagnosis_locked_control(
+                packet,
+                parsed,
+                str(direct["predicted_class_name"]),
+            )
             repair_counts.update(controlled["semantic_control_repairs"])
             records.append(
                 {
@@ -380,8 +387,7 @@ def main() -> int:
     summary = {
         "status": "ok",
         "stage": (
-            "P3.2 continuous-token diagnosis and evidence-grounded "
-            "explanation"
+            "P3.2.1 diagnosis-locked continuous-token explanation"
         ),
         "model": str(args.model),
         "p2_dir": str(p2_dir.resolve()),
@@ -391,6 +397,11 @@ def main() -> int:
         "qwen_frozen": True,
         "continuous_vector_prompt_enabled": True,
         "text_prompt_exposes_upstream_top1_or_probabilities": False,
+        "text_prompt_exposes_ground_truth": False,
+        "text_prompt_exposes_stage1_qwen_diagnosis": True,
+        "diagnosis_lock_source": (
+            "P3.1.1 frozen-Qwen direct continuous-token prediction"
+        ),
         "selection": {
             "method": "condition-balanced uncertainty stratification",
             "available_samples": len(source_rows),
@@ -415,8 +426,9 @@ def main() -> int:
         },
         "note": (
             "Ground-truth labels are used only after generation. The textual "
-            "prompt supplies ontology and physical evidence but does not "
-            "expose P2/P3.1 predicted labels or candidate probabilities."
+            "prompt supplies ontology, physical evidence, and the preceding "
+            "Qwen continuous-token diagnosis, but does not expose P2 labels, "
+            "candidate probabilities, or ground truth."
         ),
     }
     (output_dir / "p32_report.json").write_text(

@@ -457,20 +457,22 @@ per-condition recall; auxiliary-token separability; and paired disagreements
 between Qwen and the upstream fused classifier. This stage should be completed
 before adding explanation generation or reporting paper-level performance.
 
-## P3.2 continuous-token diagnosis and explanation
+## P3.2.1 diagnosis-locked continuous-token explanation
 
-P3.2 reuses a predefined P3.1.1 adapter checkpoint and prepends its continuous
-semantic tokens to a structured explanation instruction. The text instruction
-contains the allowed fault ontology, physical symptom evidence, uncertainty
-indicators, and maintenance policy, but deliberately excludes the P2/P3.1
-Top-1 label and candidate probabilities. Fault identity must therefore be read
-from the continuous tokens, while the textual evidence supports auditable
-reasoning and constrained maintenance guidance.
+P3.2.1 uses an explicit diagnosis-then-explanation cascade. The predefined
+seed-42 P3.1.1 stage first reads the continuous semantic tokens and generates
+the fault label. The explanation stage receives that self-generated diagnosis,
+the same continuous tokens, ontology-checked physical symptoms, uncertainty
+indicators, and maintenance policy. It does not receive the P2 Top-1 label,
+candidate probabilities, or ground truth. Separating diagnosis from
+verbalization prevents the longer JSON task from changing a diagnosis that was
+already established from continuous engineering semantics.
 
-The predefined seed-42 P3.1.1 diagnosis acts as the fallback if explanation
-generation is malformed. The semantic controller validates class-evidence
-consistency, uncertainty acknowledgement, and maintenance policy without
-accessing ground-truth labels. Run a 32-sample explanation probe with:
+The explanation prompt supplies required evidence partitions and safety-policy
+fields, leaving Qwen to generate the evidence-linked narrative. The semantic
+controller restores the stage-1 diagnosis if necessary and validates
+class-evidence consistency, uncertainty acknowledgement, and maintenance
+policy without accessing ground-truth labels. Run a 32-sample probe with:
 
 ```bash
 P2_DIR=<current_p2.2_export_directory> \
