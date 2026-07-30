@@ -267,6 +267,11 @@ def main() -> int:
                     stderr=subprocess.STDOUT,
                     check=True,
                 )
+            if not report_path.is_file():
+                raise RuntimeError(
+                    "P1 subprocess exited without producing its report: "
+                    f"{report_path}. Inspect {output_dir / 'run.log'}."
+                )
     (dataset_root / "commands.txt").write_text(
         "\n".join(commands) + "\n",
         encoding="utf-8",

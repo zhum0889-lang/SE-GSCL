@@ -41,7 +41,7 @@ class HustAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "raw"
             root.mkdir()
-            _write_hust_record(root / "H_25hz.xls", rows=48)
+            _write_hust_record(root / "H_25hz.XLS", rows=48)
 
             dataset = build_domain_window_dataset(
                 temp_dir,

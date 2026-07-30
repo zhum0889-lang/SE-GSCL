@@ -185,7 +185,7 @@ def load_hustbearing(
     wanted_domains = None if domains is None else {int(value) for value in domains}
     root = _resolve_hust_data_root(data_root)
     records: list[RawRecord] = []
-    for path in sorted(root.glob("*.xls")):
+    for path in _hust_xls_files(root):
         match = HUST_FILE_RE.match(path.name)
         if match is None:
             continue
@@ -648,17 +648,40 @@ def _mat_field(value: object, name: str) -> object:
     raise KeyError(f"MATLAB struct field {name!r} is missing")
 
 
+def _hust_xls_files(data_root: Path) -> list[Path]:
+    if not data_root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in data_root.iterdir()
+        if path.is_file() and path.suffix.lower() == ".xls"
+    )
+
+
 def _resolve_hust_data_root(data_root: Path) -> Path:
-    direct_files = list(data_root.glob("*.xls"))
+    direct_files = _hust_xls_files(data_root)
     if direct_files:
         return data_root
     nested_candidates = (data_root / "raw data", data_root / "raw")
     for nested in nested_candidates:
-        if nested.is_dir() and any(nested.glob("*.xls")):
+        if _hust_xls_files(nested):
             return nested
+    recursive_files = sorted(
+        path
+        for path in data_root.rglob("*")
+        if path.is_file() and path.suffix.lower() == ".xls"
+    ) if data_root.is_dir() else []
+    if recursive_files:
+        parent_counts: dict[Path, int] = {}
+        for path in recursive_files:
+            parent_counts[path.parent] = parent_counts.get(path.parent, 0) + 1
+        return max(
+            parent_counts,
+            key=lambda parent: (parent_counts[parent], str(parent)),
+        )
     raise FileNotFoundError(
-        "Could not find HUSTbearing .xls files in "
-        f"{data_root}, {nested_candidates[0]}, or {nested_candidates[1]}"
+        "Could not find HUSTbearing .xls files recursively under "
+        f"{data_root}."
     )
 
 

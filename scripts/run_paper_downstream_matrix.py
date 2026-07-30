@@ -260,6 +260,11 @@ def _run_job(
             stderr=subprocess.STDOUT,
             check=True,
         )
+    if not report.is_file():
+        raise RuntimeError(
+            "Downstream subprocess exited without producing its report: "
+            f"{report}. Inspect {output_dir / 'run.log'}."
+        )
 
 
 def main() -> int:
