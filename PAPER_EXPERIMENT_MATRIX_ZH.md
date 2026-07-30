@@ -98,12 +98,12 @@ python scripts/cache_symptom_embeddings.py \
 ```bash
 python scripts/run_paper_p1_matrix.py \
   --dataset cwru4 \
-  --data-root /mnt/workspace/fdllm/se_gscl_impl/data/CWRU \
+  --data-root /mnt/workspace/fdllm/data/CWRU \
   --device cuda
 
 python scripts/run_paper_p1_matrix.py \
   --dataset cwru4 \
-  --data-root /mnt/workspace/fdllm/se_gscl_impl/data/CWRU \
+  --data-root /mnt/workspace/fdllm/data/CWRU \
   --device cuda --execute
 ```
 
@@ -112,7 +112,7 @@ HUSTbearing 根目录必须包含官方 `raw data` 目录：
 ```bash
 python scripts/run_paper_p1_matrix.py \
   --dataset hustbearing \
-  --data-root /mnt/workspace/fdllm/se_gscl_impl/data/HUSTbearing \
+  --data-root /mnt/workspace/fdllm/data/HUSTbearing \
   --device cuda --execute
 ```
 
@@ -121,14 +121,14 @@ python scripts/run_paper_p1_matrix.py \
 ```bash
 python scripts/run_paper_downstream_matrix.py \
   --dataset cwru4 \
-  --data-root /mnt/workspace/fdllm/se_gscl_impl/data/CWRU \
+  --data-root /mnt/workspace/fdllm/data/CWRU \
   --model "$QWEN" \
   --stage p2 --device cuda --dtype bfloat16 \
   --local-files-only --execute
 
 python scripts/run_paper_downstream_matrix.py \
   --dataset cwru4 \
-  --data-root /mnt/workspace/fdllm/se_gscl_impl/data/CWRU \
+  --data-root /mnt/workspace/fdllm/data/CWRU \
   --model "$QWEN" \
   --stage p3 --device cuda --dtype bfloat16 \
   --prompt-epochs 10 --local-files-only --execute

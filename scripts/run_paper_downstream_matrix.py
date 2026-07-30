@@ -72,6 +72,16 @@ def _command_text(command: Sequence[str]) -> str:
     return shlex.join(str(value) for value in command)
 
 
+def _dataset_root_candidates(dataset: str) -> list[Path]:
+    names = (
+        ("CWRU", "cwru")
+        if dataset.startswith("cwru")
+        else ("HUSTbearing", "HUSTBearing", "hustbearing")
+    )
+    bases = (ROOT / "data", ROOT.parent / "data")
+    return [base / name for base in bases for name in names]
+
+
 def _add_flag(command: list[str], enabled: bool, flag: str) -> None:
     if enabled:
         command.append(flag)
@@ -279,8 +289,23 @@ def main() -> int:
     output_root = Path(args.output_root)
 
     if args.execute:
+        if not data_root.exists():
+            existing = [
+                path
+                for path in _dataset_root_candidates(args.dataset)
+                if path.exists()
+            ]
+            hint = (
+                "\nDetected candidate(s):\n  "
+                + "\n  ".join(str(path) for path in existing)
+                if existing
+                else ""
+            )
+            raise FileNotFoundError(
+                f"Dataset root not found: {data_root}{hint}\n"
+                "Pass the correct directory with --data-root."
+            )
         required = [
-            data_root,
             global_cache / "text_embeddings.npz",
             symptom_cache / "symptom_embeddings.npz",
             model / "config.json",

@@ -146,6 +146,16 @@ def command_text(command: Sequence[str]) -> str:
     return shlex.join(str(value) for value in command)
 
 
+def dataset_root_candidates(dataset: str) -> list[Path]:
+    names = (
+        ("CWRU", "cwru")
+        if dataset.startswith("cwru")
+        else ("HUSTbearing", "HUSTBearing", "hustbearing")
+    )
+    bases = (ROOT / "data", ROOT.parent / "data")
+    return [base / name for base in bases for name in names]
+
+
 def main() -> int:
     args = parse_args()
     matrix = load_matrix(args.matrix)
@@ -158,7 +168,27 @@ def main() -> int:
     )
     if args.execute:
         if not data_root.exists():
-            raise FileNotFoundError(f"Dataset root not found: {data_root}")
+            existing = [
+                path
+                for path in dataset_root_candidates(args.dataset)
+                if path.exists()
+            ]
+            hint = (
+                "\nDetected candidate(s):\n  "
+                + "\n  ".join(str(path) for path in existing)
+                if existing
+                else (
+                    "\nChecked common locations:\n  "
+                    + "\n  ".join(
+                        str(path)
+                        for path in dataset_root_candidates(args.dataset)
+                    )
+                )
+            )
+            raise FileNotFoundError(
+                f"Dataset root not found: {data_root}{hint}\n"
+                "Pass the correct directory with --data-root."
+            )
         if not (text_cache / "text_embeddings.npz").is_file():
             raise FileNotFoundError(
                 "Frozen text cache is missing: "

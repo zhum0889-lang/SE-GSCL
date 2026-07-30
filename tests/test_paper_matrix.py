@@ -15,6 +15,7 @@ for path in (ROOT, ROOT / "src"):
 from scripts.run_paper_downstream_matrix import build_p3_command  # noqa: E402
 from scripts.run_paper_p1_matrix import (  # noqa: E402
     build_train_command,
+    dataset_root_candidates,
     load_matrix,
 )
 from scripts.summarize_paper_matrix import _aggregate  # noqa: E402
@@ -41,6 +42,12 @@ class PaperMatrixTests(unittest.TestCase):
             "lwf",
             {job["strategy"] for job in self.matrix["p1_jobs"]},
         )
+
+    def test_cloud_dataset_candidates_include_repository_sibling(self) -> None:
+        candidates = dataset_root_candidates("cwru4")
+        self.assertIn(ROOT.parent / "data" / "CWRU", candidates)
+        hust_candidates = dataset_root_candidates("hustbearing")
+        self.assertIn(ROOT.parent / "data" / "HUSTbearing", hust_candidates)
 
     def test_p1_ablation_command_applies_loss_override(self) -> None:
         job = next(
