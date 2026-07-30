@@ -39,7 +39,7 @@ class HustAdapterTests(unittest.TestCase):
 
     def test_domain_window_builder_preserves_channel_axis(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "raw data"
+            root = Path(temp_dir) / "raw"
             root.mkdir()
             _write_hust_record(root / "H_25hz.xls", rows=48)
 

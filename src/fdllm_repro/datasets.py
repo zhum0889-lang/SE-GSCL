@@ -652,11 +652,13 @@ def _resolve_hust_data_root(data_root: Path) -> Path:
     direct_files = list(data_root.glob("*.xls"))
     if direct_files:
         return data_root
-    nested = data_root / "raw data"
-    if nested.is_dir() and any(nested.glob("*.xls")):
-        return nested
+    nested_candidates = (data_root / "raw data", data_root / "raw")
+    for nested in nested_candidates:
+        if nested.is_dir() and any(nested.glob("*.xls")):
+            return nested
     raise FileNotFoundError(
-        f"Could not find HUSTbearing .xls files in {data_root} or {nested}"
+        "Could not find HUSTbearing .xls files in "
+        f"{data_root}, {nested_candidates[0]}, or {nested_candidates[1]}"
     )
 
 

@@ -107,12 +107,13 @@ python scripts/run_paper_p1_matrix.py \
   --device cuda --execute
 ```
 
-HUSTbearing 根目录必须包含官方 `raw data` 目录：
+HUSTbearing 根目录可以包含 `raw/` 或官方原始的 `raw data/` 目录，
+也可以直接将包含 `.xls` 文件的目录传给 `--data-root`：
 
 ```bash
 python scripts/run_paper_p1_matrix.py \
   --dataset hustbearing \
-  --data-root /mnt/workspace/fdllm/data/HUSTbearing \
+  --data-root /mnt/workspace/fdllm/data/hustbearing \
   --device cuda --execute
 ```
 
