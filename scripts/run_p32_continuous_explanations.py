@@ -196,7 +196,34 @@ def _preservation_metrics(
         "direct_prompt_accuracy": direct_correct / max(1, len(records)),
         "p2_fused_accuracy": p2_correct / max(1, len(records)),
         "valid_explanation_outputs": len(valid),
-        "diagnosis_preservation_rate": preserved / max(1, len(valid)),
+        "diagnosis_preservation_rate": preserved / max(1, len(records)),
+        "valid_output_diagnosis_preservation_rate": (
+            preserved / max(1, len(valid))
+        ),
+    }
+
+
+def _failure_audit(
+    records: Sequence[dict[str, Any]],
+) -> dict[str, list[int]]:
+    return {
+        "unparseable_sample_ids": [
+            int(record["sample_id"])
+            for record in records
+            if not isinstance(record.get("parsed_output"), dict)
+        ],
+        "raw_diagnosis_drift_sample_ids": [
+            int(record["sample_id"])
+            for record in records
+            if isinstance(record.get("parsed_output"), dict)
+            and str(record["parsed_output"].get("diagnosis", ""))
+            != str(record["direct_prediction"]["predicted_class_name"])
+        ],
+        "semantic_control_repaired_sample_ids": [
+            int(record["sample_id"])
+            for record in records
+            if record["controlled_output"]["semantic_control_repairs"]
+        ],
     }
 
 
@@ -414,6 +441,7 @@ def main() -> int:
             "batch_size": args.batch_size,
         },
         "diagnosis_preservation": preservation,
+        "failure_audit": _failure_audit(records),
         "raw_metrics": raw_metrics,
         "controlled_metrics": {
             **controlled_metrics,

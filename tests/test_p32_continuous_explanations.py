@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 from scripts.run_p32_continuous_explanations import (  # noqa: E402
     _assemble_continuous_inputs,
     _continuous_packet,
+    _failure_audit,
     _preservation_metrics,
 )
 
@@ -69,6 +70,7 @@ class P32ContinuousExplanationTests(unittest.TestCase):
     def test_preservation_metrics_compare_both_diagnostic_stages(self) -> None:
         records = [
             {
+                "sample_id": 1,
                 "packet": {
                     "ground_truth_class_name": "InnerRace",
                     "p2_predicted_class_name": "OuterRace",
@@ -77,20 +79,51 @@ class P32ContinuousExplanationTests(unittest.TestCase):
                     "predicted_class_name": "InnerRace"
                 },
                 "parsed_output": {"diagnosis": "InnerRace"},
+                "controlled_output": {"semantic_control_repairs": []},
             },
             {
+                "sample_id": 2,
                 "packet": {
                     "ground_truth_class_name": "Ball",
                     "p2_predicted_class_name": "Ball",
                 },
                 "direct_prediction": {"predicted_class_name": "Ball"},
                 "parsed_output": {"diagnosis": "OuterRace"},
+                "controlled_output": {"semantic_control_repairs": []},
+            },
+            {
+                "sample_id": 3,
+                "packet": {
+                    "ground_truth_class_name": "Normal",
+                    "p2_predicted_class_name": "Normal",
+                },
+                "direct_prediction": {"predicted_class_name": "Normal"},
+                "parsed_output": None,
+                "controlled_output": {
+                    "semantic_control_repairs": [
+                        "diagnosis_restored_to_direct_prompt"
+                    ]
+                },
             },
         ]
         metrics = _preservation_metrics(records)
         self.assertAlmostEqual(metrics["direct_prompt_accuracy"], 1.0)
-        self.assertAlmostEqual(metrics["p2_fused_accuracy"], 0.5)
-        self.assertAlmostEqual(metrics["diagnosis_preservation_rate"], 0.5)
+        self.assertAlmostEqual(metrics["p2_fused_accuracy"], 2 / 3)
+        self.assertAlmostEqual(metrics["diagnosis_preservation_rate"], 1 / 3)
+        self.assertAlmostEqual(
+            metrics["valid_output_diagnosis_preservation_rate"],
+            0.5,
+        )
+        audit = _failure_audit(records)
+        self.assertEqual(audit["unparseable_sample_ids"], [3])
+        self.assertEqual(
+            audit["raw_diagnosis_drift_sample_ids"],
+            [2],
+        )
+        self.assertEqual(
+            audit["semantic_control_repaired_sample_ids"],
+            [3],
+        )
 
 
 if __name__ == "__main__":
