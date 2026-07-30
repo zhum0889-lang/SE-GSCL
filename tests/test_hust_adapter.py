@@ -69,7 +69,16 @@ class HustAdapterTests(unittest.TestCase):
 
 
 def _write_hust_record(path: Path, rows: int) -> None:
-    header = [
+    header = _hust_header(path, rows)
+    data = [
+        f"{index / 25600:.6f}\t0.0\t{0.1 + index:.4f}\t{0.2 + index:.4f}\t{0.3 + index:.4f}"
+        for index in range(rows)
+    ]
+    path.write_text("\n".join(header + data), encoding="utf-8")
+
+
+def _hust_header(path: Path, rows: int) -> list[str]:
+    return [
         f"Title:\t\t{path.stem}",
         "Parameters:",
         "Speed",
@@ -93,11 +102,6 @@ def _write_hust_record(path: Path, rows: int) -> None:
         "",
         "Data",
     ]
-    data = [
-        f"{index / 25600:.6f}\t0.0\t{0.1 + index:.4f}\t{0.2 + index:.4f}\t{0.3 + index:.4f}"
-        for index in range(rows)
-    ]
-    path.write_text("\n".join(header + data), encoding="utf-8")
 
 
 if __name__ == "__main__":

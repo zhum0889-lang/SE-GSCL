@@ -156,6 +156,40 @@ def dataset_root_candidates(dataset: str) -> list[Path]:
     return [base / name for base in bases for name in names]
 
 
+def audit_dataset_protocol(
+    dataset: str,
+    data_root: Path,
+    dataset_config: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, object] | None:
+    """Run dataset-specific preflight checks before expensive matrix jobs."""
+
+    if dataset != "hustbearing":
+        return None
+    src_path = ROOT / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from se_gscl.data import (  # noqa: PLC0415
+        audit_hust_protocol,
+        write_hust_protocol_audit,
+    )
+
+    rows, summary = audit_hust_protocol(
+        data_root,
+        dataset_config["domain_order"],
+        window_size=int(dataset_config["window_size"]),
+        step_size=int(dataset_config["step_size"]),
+        max_windows_per_file=int(dataset_config["max_windows_per_file"]),
+    )
+    write_hust_protocol_audit(rows, summary, output_dir)
+    if not summary["protocol_ready"]:
+        raise ValueError(
+            "HUSTbearing protocol audit failed. Inspect "
+            f"{output_dir / 'hust10_protocol_summary.json'}."
+        )
+    return summary
+
+
 def main() -> int:
     args = parse_args()
     matrix = load_matrix(args.matrix)
@@ -199,6 +233,16 @@ def main() -> int:
     jobs = selected_jobs(matrix, args.jobs)
     dataset_root = Path(args.output_root) / args.dataset
     dataset_root.mkdir(parents=True, exist_ok=True)
+    protocol_audit = (
+        audit_dataset_protocol(
+            args.dataset,
+            data_root,
+            dataset_config,
+            dataset_root / "protocol_audit",
+        )
+        if args.execute
+        else None
+    )
     resolved = {
         "matrix": str(Path(args.matrix).resolve()),
         "matrix_version": matrix.get("version"),
@@ -209,6 +253,7 @@ def main() -> int:
         "seeds": seeds,
         "jobs": jobs,
         "device": args.device,
+        "protocol_audit": protocol_audit,
     }
     (dataset_root / "resolved_matrix.json").write_text(
         json.dumps(resolved, indent=2),

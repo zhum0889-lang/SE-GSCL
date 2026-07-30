@@ -38,6 +38,10 @@ class PaperMatrixTests(unittest.TestCase):
             self.matrix["datasets"]["hustbearing"]["role"],
             "second_dataset",
         )
+        self.assertEqual(
+            self.matrix["datasets"]["hustbearing"]["domain_order"],
+            [20, 25, 30, 35, 40, 60, 65, 70, 75, 80],
+        )
         self.assertIn(
             "lwf",
             {job["strategy"] for job in self.matrix["p1_jobs"]},
