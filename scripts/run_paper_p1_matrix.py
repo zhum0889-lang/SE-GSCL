@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Generate multi-seed paper figures after completed jobs.",
+    )
+    parser.add_argument("--figure-formats", default="png,pdf")
     return parser.parse_args()
 
 
@@ -321,6 +327,21 @@ def main() -> int:
         "\n".join(commands) + "\n",
         encoding="utf-8",
     )
+    if args.execute and args.visualize:
+        figure_command = [
+            sys.executable,
+            str(ROOT / "scripts" / "visualize_paper_p1.py"),
+            "--root",
+            str(dataset_root),
+            "--matrix",
+            str(args.matrix),
+            "--formats",
+            str(args.figure_formats),
+        ]
+        if args.jobs:
+            figure_command.extend(["--jobs", str(args.jobs)])
+        print("VISUALIZE multi-seed P1 results")
+        subprocess.run(figure_command, cwd=ROOT, check=True)
     print(
         f"{'Executed' if args.execute else 'Planned'} "
         f"{len(commands)} P1 jobs under {dataset_root}"

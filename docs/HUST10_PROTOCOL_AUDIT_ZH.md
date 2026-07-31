@@ -58,6 +58,7 @@ python scripts/run_paper_p1_matrix.py \
   --output-root results/paper_matrix_hust10/p1 \
   --seeds 42,52,62 \
   --device cuda \
+  --visualize \
   --execute
 ```
 
@@ -72,3 +73,17 @@ find results/paper_matrix_hust10/p1/hustbearing \
 ```
 
 两项计数均应为 21。不要复用原四工况目录作为输出目录，否则已有报告会触发跳过逻辑。
+
+训练完成后，可视化结果自动写入：
+
+`results/paper_matrix_hust10/p1/hustbearing/figures/`
+
+其中包括方法总体比较、持续学习阶段曲线、十工况准确率矩阵、逐工况保持与遗忘、模块消融及最终类别召回热图。每幅图同时输出 PNG 和可编辑的矢量 PDF，并生成 `p1_visual_summary.csv` 与 `visualization_manifest.json`。也可对已有结果单独执行：
+
+```bash
+python -c "import matplotlib" || pip install "matplotlib>=3.7"
+
+python scripts/visualize_paper_p1.py \
+  --root results/paper_matrix_hust10/p1/hustbearing \
+  --formats png,pdf
+```
