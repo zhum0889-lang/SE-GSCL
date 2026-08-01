@@ -105,8 +105,9 @@ def download_url(url: str, destination: Path) -> None:
         response = urlopen(request, timeout=60)
     except HTTPError as exc:
         if exc.code == 416 and partial.exists():
-            partial.replace(destination)
-            return
+            print(f"Range resume rejected for {partial.name}; restarting download.")
+            partial.unlink()
+            return download_url(url, destination)
         raise
 
     status = getattr(response, "status", 200)
@@ -137,23 +138,52 @@ def download_url(url: str, destination: Path) -> None:
                 else:
                     print(f"  {downloaded / 1024**2:.1f} MiB")
                 last_report = now
+    if total and downloaded != total:
+        raise IOError(
+            f"Incomplete download for {destination.name}: "
+            f"received {downloaded} of {total} bytes. Partial data kept at {partial}."
+        )
     partial.replace(destination)
     print(f"Saved: {destination}")
+
+
+def test_archive(extractor: str, archive: Path, *, show_error: bool = False) -> bool:
+    result = subprocess.run(
+        [extractor, "t", str(archive)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if result.returncode != 0 and show_error:
+        output_tail = "\n".join(result.stdout.splitlines()[-20:])
+        print(f"Archive integrity test failed: {archive}\n{output_tail}")
+    return result.returncode == 0
 
 
 def download_paderborn(data_root: Path, mode: str, dry_run: bool) -> Path:
     destination = data_root / "Paderborn" / "archives"
     bearing_ids = PADERBORN_PILOT_IDS if mode == "pilot" else PADERBORN_ALL_IDS
+    extractor = shutil.which("7z") or shutil.which("7zz")
     print(f"Paderborn mode={mode}; archives={len(bearing_ids)}")
     for bearing_id in bearing_ids:
         url = f"{PADERBORN_BASE_URL}/{bearing_id}.rar"
         target = destination / f"{bearing_id}.rar"
+        if target.exists() and extractor and not test_archive(extractor, target):
+            print(f"Removing corrupt archive before retry: {target}")
+            target.unlink()
         if target.exists():
             print(f"Already present: {target}")
         elif dry_run:
             print(f"Would download: {url}")
         else:
             download_url(url, target)
+            if extractor and not test_archive(extractor, target, show_error=True):
+                target.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"Downloaded archive failed integrity validation: {target}. "
+                    "Rerun the command to download it again."
+                )
 
     manifest = {
         "dataset": "Paderborn University Bearing Data Center",
@@ -212,9 +242,24 @@ def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
     extractor = shutil.which("7z") or shutil.which("7zz")
     if not extractor:
         raise SystemExit("--extract requires 7-Zip (7z or 7zz) on PATH.")
+    archives = sorted(archive_dir.glob("*.rar"))
+    if not archives:
+        raise FileNotFoundError(f"No Paderborn RAR archives found under {archive_dir}")
+    if not dry_run:
+        invalid_archives = [
+            archive
+            for archive in archives
+            if not test_archive(extractor, archive, show_error=True)
+        ]
+        if invalid_archives:
+            names = ", ".join(archive.name for archive in invalid_archives)
+            raise RuntimeError(
+                f"Refusing extraction because archive integrity checks failed: {names}. "
+                "Rerun the downloader so corrupt archives are replaced."
+            )
     output_dir = archive_dir.parent / "extracted"
     output_dir.mkdir(parents=True, exist_ok=True)
-    for archive in sorted(archive_dir.glob("*.rar")):
+    for archive in archives:
         command = [extractor, "x", "-y", f"-o{output_dir}", str(archive)]
         if dry_run:
             print("Would run:", " ".join(command))
