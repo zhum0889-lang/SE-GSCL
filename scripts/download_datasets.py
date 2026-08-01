@@ -164,14 +164,18 @@ def test_archive(extractor: str, archive: Path, *, show_error: bool = False) -> 
 def download_paderborn(data_root: Path, mode: str, dry_run: bool) -> Path:
     destination = data_root / "Paderborn" / "archives"
     bearing_ids = PADERBORN_PILOT_IDS if mode == "pilot" else PADERBORN_ALL_IDS
-    extractor = shutil.which("7z") or shutil.which("7zz")
+    extractor = shutil.which("7zz") or shutil.which("7z")
+    if extractor:
+        print(f"Archive validator: {extractor}")
     print(f"Paderborn mode={mode}; archives={len(bearing_ids)}")
     for bearing_id in bearing_ids:
         url = f"{PADERBORN_BASE_URL}/{bearing_id}.rar"
         target = destination / f"{bearing_id}.rar"
         if target.exists() and extractor and not test_archive(extractor, target):
-            print(f"Removing corrupt archive before retry: {target}")
-            target.unlink()
+            invalid = target.with_suffix(target.suffix + ".invalid")
+            invalid.unlink(missing_ok=True)
+            target.replace(invalid)
+            print(f"Archive failed validation; preserved as {invalid}")
         if target.exists():
             print(f"Already present: {target}")
         elif dry_run:
@@ -179,10 +183,12 @@ def download_paderborn(data_root: Path, mode: str, dry_run: bool) -> Path:
         else:
             download_url(url, target)
             if extractor and not test_archive(extractor, target, show_error=True):
-                target.unlink(missing_ok=True)
+                invalid = target.with_suffix(target.suffix + ".invalid")
+                invalid.unlink(missing_ok=True)
+                target.replace(invalid)
                 raise RuntimeError(
-                    f"Downloaded archive failed integrity validation: {target}. "
-                    "Rerun the command to download it again."
+                    f"Downloaded archive failed integrity validation and was preserved "
+                    f"as {invalid}. Check its size and file signature before retrying."
                 )
 
     manifest = {
@@ -239,9 +245,10 @@ def download_hust(data_root: Path, dry_run: bool) -> Path:
 
 
 def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
-    extractor = shutil.which("7z") or shutil.which("7zz")
+    extractor = shutil.which("7zz") or shutil.which("7z")
     if not extractor:
         raise SystemExit("--extract requires 7-Zip (7z or 7zz) on PATH.")
+    print(f"Archive extractor: {extractor}")
     archives = sorted(archive_dir.glob("*.rar"))
     if not archives:
         raise FileNotFoundError(f"No Paderborn RAR archives found under {archive_dir}")
