@@ -172,10 +172,43 @@ The selected cross-condition datasets can be downloaded reproducibly:
 ```
 
 `pilot` downloads three representative Paderborn bearing archives (healthy,
-outer-race fault, and inner-race fault) plus the public HUSTbearing folder.
-Use `--dataset paderborn --mode full` for all 32 Paderborn archives (about
-5 GB). Downloads are stored under `data/Paderborn` and `data/HUSTbearing` and
-are excluded from Git. Paderborn downloads resume from `.part` files.
+outer-race fault, and inner-race fault), the public HUSTbearing folder, and
+subset 1 of the Mendeley multi-domain bearing dataset. Use `--mode full` for
+all 32 Paderborn archives and all three Mendeley bearing subsets. Downloads are
+stored under `data/Paderborn`, `data/HUSTbearing`, and
+`data/MultiDomainBearing`; all are excluded from Git. Direct HTTP downloads
+resume from `.part` files.
+
+### Multi-domain bearing dataset used by Risca et al.
+
+Run a pilot download of the 6204 deep-groove ball-bearing subset:
+
+```bash
+cd /mnt/workspace/fdllm/se_gscl_impl
+python scripts/download_datasets.py \
+  --dataset multidomain \
+  --mode pilot \
+  --data-root /mnt/workspace/fdllm/data \
+  --extract
+```
+
+After the pilot has been audited, download all three bearing subsets required
+for the 18-domain protocol:
+
+```bash
+python scripts/download_datasets.py \
+  --dataset multidomain \
+  --mode full \
+  --data-root /mnt/workspace/fdllm/data \
+  --extract
+```
+
+`risca` is accepted as an alias for `multidomain`. The script downloads from
+Mendeley Data's anonymous public ZIP endpoint, follows the short-lived signed
+redirect, resumes interrupted transfers from `.part` files, verifies that the
+completed ZIP contains MATLAB records, blocks unsafe extraction paths, and
+writes `data/MultiDomainBearing/source_manifest.json`. A repeated invocation
+skips archives that already pass validation.
 
 To inspect the planned transfer without downloading:
 

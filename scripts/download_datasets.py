@@ -1,7 +1,9 @@
 """Download the public datasets selected for SE-GSCL experiments.
 
 Paderborn is hosted as direct RAR archives. HUSTbearing is hosted as a
-public Google Drive folder and is downloaded with gdown.
+public Google Drive folder and is downloaded with gdown. The multi-domain
+bearing dataset used by Risca et al. is downloaded through Mendeley Data's
+anonymous public ZIP endpoint.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -57,21 +60,48 @@ HUST_FOLDER_URL = (
     "https://drive.google.com/drive/folders/"
     "1UMOvyfstYJRyR0rPw0OfH-tIjJg2_0aN?usp=sharing"
 )
+MENDELEY_ZIP_URL = "https://data.mendeley.com/public-api/zip/{dataset_id}/download/{version}"
+MULTIDOMAIN_SUBSETS = (
+    {
+        "subset": 1,
+        "dataset_id": "53vtnjy6c6",
+        "version": 1,
+        "bearing": "6204_deep_groove_ball",
+        "doi": "10.17632/53vtnjy6c6.1",
+    },
+    {
+        "subset": 2,
+        "dataset_id": "7trwzz77xh",
+        "version": 1,
+        "bearing": "N204_NJ204_cylindrical_roller",
+        "doi": "10.17632/7trwzz77xh.1",
+    },
+    {
+        "subset": 3,
+        "dataset_id": "2cygy6y4rk",
+        "version": 1,
+        "bearing": "30204_tapered_roller",
+        "doi": "10.17632/2cygy6y4rk.1",
+    },
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--dataset",
-        choices=("paderborn", "hust", "all"),
+        choices=("paderborn", "hust", "multidomain", "risca", "all"),
         default="all",
-        help="Dataset to download.",
+        help="Dataset to download. 'risca' is an alias for 'multidomain'.",
     )
     parser.add_argument(
         "--mode",
         choices=("pilot", "full"),
         default="pilot",
-        help="Paderborn pilot downloads one healthy, one outer-race, and one inner-race archive.",
+        help=(
+            "Pilot downloads three representative Paderborn archives and Mendeley "
+            "subset 1; full downloads all Paderborn archives and all three Mendeley subsets."
+        ),
     )
     parser.add_argument(
         "--data-root",
@@ -82,7 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--extract",
         action="store_true",
-        help="Extract Paderborn RAR files when 7z is installed.",
+        help="Extract downloaded Paderborn RAR and Mendeley ZIP archives.",
     )
     parser.add_argument(
         "--dry-run",
@@ -269,6 +299,117 @@ def download_hust(data_root: Path, dry_run: bool) -> Path:
     return destination
 
 
+def inspect_zip_archive(path: Path) -> dict[str, int]:
+    """Validate the ZIP directory and return counts without rereading all payloads."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            files = [entry for entry in archive.infolist() if not entry.is_dir()]
+            mat_files = [entry for entry in files if entry.filename.lower().endswith(".mat")]
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise RuntimeError(f"Invalid ZIP archive: {path}: {exc}") from exc
+    if not files:
+        raise RuntimeError(f"ZIP archive contains no files: {path}")
+    if not mat_files:
+        raise RuntimeError(f"ZIP archive contains no MAT records: {path}")
+    return {"zip_entries": len(files), "mat_files": len(mat_files)}
+
+
+def download_multidomain(data_root: Path, mode: str, dry_run: bool) -> Path:
+    dataset_root = data_root / "MultiDomainBearing"
+    archive_dir = dataset_root / "archives"
+    selected = MULTIDOMAIN_SUBSETS[:1] if mode == "pilot" else MULTIDOMAIN_SUBSETS
+    manifest_subsets: list[dict[str, object]] = []
+    print(f"MultiDomainBearing mode={mode}; subsets={len(selected)}")
+
+    for metadata in selected:
+        dataset_id = str(metadata["dataset_id"])
+        version = int(metadata["version"])
+        filename = f"subset{metadata['subset']}_{metadata['bearing']}.zip"
+        target = archive_dir / filename
+        url = MENDELEY_ZIP_URL.format(dataset_id=dataset_id, version=version)
+
+        validation: dict[str, int] | None = None
+        if target.exists():
+            try:
+                validation = inspect_zip_archive(target)
+            except RuntimeError:
+                invalid = target.with_suffix(target.suffix + ".invalid")
+                invalid.unlink(missing_ok=True)
+                target.replace(invalid)
+                print(f"Archive failed validation; preserved as {invalid}")
+
+        if target.exists():
+            print(f"Already present: {target}")
+        elif dry_run:
+            print(f"Would download: {url}")
+            print(f"Destination: {target}")
+        else:
+            download_url(url, target)
+            try:
+                validation = inspect_zip_archive(target)
+            except RuntimeError as exc:
+                invalid = target.with_suffix(target.suffix + ".invalid")
+                invalid.unlink(missing_ok=True)
+                target.replace(invalid)
+                raise RuntimeError(
+                    f"Downloaded Mendeley archive failed validation and was preserved as {invalid}."
+                ) from exc
+
+        manifest_entry: dict[str, object] = {
+            **metadata,
+            "source": f"https://data.mendeley.com/datasets/{dataset_id}/{version}",
+            "download_url": url,
+            "archive": str(target.relative_to(dataset_root)),
+        }
+        if target.exists():
+            if validation is None:
+                validation = inspect_zip_archive(target)
+            manifest_entry.update(validation)
+            manifest_entry["bytes"] = target.stat().st_size
+        manifest_subsets.append(manifest_entry)
+
+    if not dry_run:
+        write_manifest(
+            dataset_root / "source_manifest.json",
+            {
+                "dataset": "Multi-domain vibration dataset with compound machine faults",
+                "mode": mode,
+                "license": "CC BY 4.0",
+                "subsets": manifest_subsets,
+            },
+        )
+    return archive_dir
+
+
+def extract_zip_archives(archive_dir: Path, dry_run: bool) -> None:
+    archives = sorted(archive_dir.glob("*.zip"))
+    if not archives:
+        if dry_run:
+            print(f"Would extract downloaded Mendeley ZIP archives under {archive_dir}")
+            return
+        raise FileNotFoundError(f"No Mendeley ZIP archives found under {archive_dir}")
+    output_root = archive_dir.parent / "extracted"
+    for archive_path in archives:
+        validation = inspect_zip_archive(archive_path)
+        output_dir = output_root / archive_path.stem
+        print(
+            f"Extracting {archive_path.name}: {validation['mat_files']} MAT files "
+            f"into {output_dir}"
+        )
+        if dry_run:
+            continue
+        output_dir.mkdir(parents=True, exist_ok=True)
+        resolved_root = output_dir.resolve()
+        with zipfile.ZipFile(archive_path) as archive:
+            for entry in archive.infolist():
+                resolved_target = (output_dir / entry.filename).resolve()
+                if resolved_target != resolved_root and resolved_root not in resolved_target.parents:
+                    raise RuntimeError(
+                        f"Unsafe path in ZIP archive {archive_path.name}: {entry.filename}"
+                    )
+            archive.extractall(output_dir)
+
+
 def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
     archive_tool = find_archive_tool()
     if not archive_tool:
@@ -315,12 +456,17 @@ def main() -> int:
     data_root = args.data_root.resolve()
     print(f"Data root: {data_root}")
     paderborn_dir = None
+    multidomain_dir = None
     if args.dataset in {"paderborn", "all"}:
         paderborn_dir = download_paderborn(data_root, args.mode, args.dry_run)
     if args.dataset in {"hust", "all"}:
         download_hust(data_root, args.dry_run)
+    if args.dataset in {"multidomain", "risca", "all"}:
+        multidomain_dir = download_multidomain(data_root, args.mode, args.dry_run)
     if args.extract and paderborn_dir is not None:
         extract_paderborn(paderborn_dir, args.dry_run)
+    if args.extract and multidomain_dir is not None:
+        extract_zip_archives(multidomain_dir, args.dry_run)
     return 0
 
 
