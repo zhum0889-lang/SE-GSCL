@@ -147,9 +147,30 @@ def download_url(url: str, destination: Path) -> None:
     print(f"Saved: {destination}")
 
 
-def test_archive(extractor: str, archive: Path, *, show_error: bool = False) -> bool:
+def find_archive_tool() -> tuple[str, str] | None:
+    unrar = shutil.which("unrar")
+    if unrar:
+        return "unrar", unrar
+    seven_zip = shutil.which("7zz") or shutil.which("7z")
+    if seven_zip:
+        return "7zip", seven_zip
+    return None
+
+
+def test_archive(
+    archive_tool: tuple[str, str],
+    archive: Path,
+    *,
+    show_error: bool = False,
+) -> bool:
+    backend, executable = archive_tool
+    command = (
+        [executable, "t", "-idq", str(archive)]
+        if backend == "unrar"
+        else [executable, "t", str(archive)]
+    )
     result = subprocess.run(
-        [extractor, "t", str(archive)],
+        command,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -164,14 +185,14 @@ def test_archive(extractor: str, archive: Path, *, show_error: bool = False) -> 
 def download_paderborn(data_root: Path, mode: str, dry_run: bool) -> Path:
     destination = data_root / "Paderborn" / "archives"
     bearing_ids = PADERBORN_PILOT_IDS if mode == "pilot" else PADERBORN_ALL_IDS
-    extractor = shutil.which("7zz") or shutil.which("7z")
-    if extractor:
-        print(f"Archive validator: {extractor}")
+    archive_tool = find_archive_tool()
+    if archive_tool:
+        print(f"Archive validator: {archive_tool[0]} ({archive_tool[1]})")
     print(f"Paderborn mode={mode}; archives={len(bearing_ids)}")
     for bearing_id in bearing_ids:
         url = f"{PADERBORN_BASE_URL}/{bearing_id}.rar"
         target = destination / f"{bearing_id}.rar"
-        if target.exists() and extractor and not test_archive(extractor, target):
+        if target.exists() and archive_tool and not test_archive(archive_tool, target):
             invalid = target.with_suffix(target.suffix + ".invalid")
             invalid.unlink(missing_ok=True)
             target.replace(invalid)
@@ -182,7 +203,7 @@ def download_paderborn(data_root: Path, mode: str, dry_run: bool) -> Path:
             print(f"Would download: {url}")
         else:
             download_url(url, target)
-            if extractor and not test_archive(extractor, target, show_error=True):
+            if archive_tool and not test_archive(archive_tool, target, show_error=True):
                 invalid = target.with_suffix(target.suffix + ".invalid")
                 invalid.unlink(missing_ok=True)
                 target.replace(invalid)
@@ -245,10 +266,11 @@ def download_hust(data_root: Path, dry_run: bool) -> Path:
 
 
 def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
-    extractor = shutil.which("7zz") or shutil.which("7z")
-    if not extractor:
-        raise SystemExit("--extract requires 7-Zip (7z or 7zz) on PATH.")
-    print(f"Archive extractor: {extractor}")
+    archive_tool = find_archive_tool()
+    if not archive_tool:
+        raise SystemExit("--extract requires unrar, 7zz, or 7z on PATH.")
+    backend, executable = archive_tool
+    print(f"Archive extractor: {backend} ({executable})")
     archives = sorted(archive_dir.glob("*.rar"))
     if not archives:
         raise FileNotFoundError(f"No Paderborn RAR archives found under {archive_dir}")
@@ -256,7 +278,7 @@ def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
         invalid_archives = [
             archive
             for archive in archives
-            if not test_archive(extractor, archive, show_error=True)
+            if not test_archive(archive_tool, archive, show_error=True)
         ]
         if invalid_archives:
             names = ", ".join(archive.name for archive in invalid_archives)
@@ -267,7 +289,11 @@ def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
     output_dir = archive_dir.parent / "extracted"
     output_dir.mkdir(parents=True, exist_ok=True)
     for archive in archives:
-        command = [extractor, "x", "-y", f"-o{output_dir}", str(archive)]
+        command = (
+            [executable, "x", "-o+", "-idq", str(archive), f"{output_dir}/"]
+            if backend == "unrar"
+            else [executable, "x", "-y", f"-o{output_dir}", str(archive)]
+        )
         if dry_run:
             print("Would run:", " ".join(command))
         else:
