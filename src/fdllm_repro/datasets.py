@@ -430,9 +430,18 @@ def load_paderborn(
     wanted_domains = None if domains is None else {int(value) for value in domains}
     records: list[RawRecord] = []
     seen_paths: set[str] = set()
-    for path in sorted(data_root.rglob("*.mat")):
+    mat_paths = sorted(
+        path
+        for path in data_root.rglob("*")
+        if path.is_file() and path.suffix.lower() == ".mat"
+    )
+    unmatched_names: list[str] = []
+    unsupported_conditions: set[tuple[int, float, int]] = set()
+    for path in mat_paths:
         match = PADERBORN_FILE_RE.match(path.name)
         if match is None:
+            if len(unmatched_names) < 8:
+                unmatched_names.append(path.name)
             continue
         canonical_path = str(path.resolve()).lower()
         if canonical_path in seen_paths:
@@ -444,6 +453,7 @@ def load_paderborn(
         radial_force_n = int(match.group("force")) * 100
         condition_key = (speed_rpm, torque_nm, radial_force_n)
         if condition_key not in PADERBORN_DOMAINS:
+            unsupported_conditions.add(condition_key)
             continue
         domain_id = PADERBORN_DOMAINS[condition_key]
         if wanted_domains is not None and domain_id not in wanted_domains:
@@ -479,8 +489,31 @@ def load_paderborn(
         )
     if not records:
         domain_hint = "" if wanted_domains is None else f" for domains {sorted(wanted_domains)}"
+        if not mat_paths:
+            archive_count = sum(
+                1
+                for path in data_root.parent.joinpath("archives").glob("*.rar")
+                if path.is_file()
+            )
+            archive_hint = (
+                f" Found {archive_count} RAR archive(s) next to this directory; "
+                "extract them before preparing the dataset."
+                if archive_count
+                else " No MAT files or adjacent RAR archives were detected."
+            )
+            raise FileNotFoundError(
+                f"No Paderborn MAT files found under {data_root}.{archive_hint}"
+            )
+        detail_parts = [f"scanned_mat_files={len(mat_paths)}"]
+        if unmatched_names:
+            detail_parts.append(f"unmatched_filename_examples={unmatched_names}")
+        if unsupported_conditions:
+            detail_parts.append(
+                f"unsupported_condition_tuples={sorted(unsupported_conditions)}"
+            )
         raise FileNotFoundError(
-            f"No supported Paderborn .mat records found under {data_root}{domain_hint}"
+            f"No supported Paderborn MAT records found under {data_root}{domain_hint}; "
+            + "; ".join(detail_parts)
         )
     return records
 
