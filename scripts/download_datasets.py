@@ -151,6 +151,9 @@ def find_archive_tool() -> tuple[str, str] | None:
     unrar = shutil.which("unrar")
     if unrar:
         return "unrar", unrar
+    unar = shutil.which("unar")
+    if unar and shutil.which("lsar"):
+        return "unar", unar
     seven_zip = shutil.which("7zz") or shutil.which("7z")
     if seven_zip:
         return "7zip", seven_zip
@@ -164,11 +167,12 @@ def test_archive(
     show_error: bool = False,
 ) -> bool:
     backend, executable = archive_tool
-    command = (
-        [executable, "t", "-idq", str(archive)]
-        if backend == "unrar"
-        else [executable, "t", str(archive)]
-    )
+    if backend == "unrar":
+        command = [executable, "t", "-idq", str(archive)]
+    elif backend == "unar":
+        command = [shutil.which("lsar") or "lsar", str(archive)]
+    else:
+        command = [executable, "t", str(archive)]
     result = subprocess.run(
         command,
         check=False,
@@ -268,7 +272,7 @@ def download_hust(data_root: Path, dry_run: bool) -> Path:
 def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
     archive_tool = find_archive_tool()
     if not archive_tool:
-        raise SystemExit("--extract requires unrar, 7zz, or 7z on PATH.")
+        raise SystemExit("--extract requires unrar, unar/lsar, 7zz, or 7z on PATH.")
     backend, executable = archive_tool
     print(f"Archive extractor: {backend} ({executable})")
     archives = sorted(archive_dir.glob("*.rar"))
@@ -289,11 +293,12 @@ def extract_paderborn(archive_dir: Path, dry_run: bool) -> None:
     output_dir = archive_dir.parent / "extracted"
     output_dir.mkdir(parents=True, exist_ok=True)
     for archive in archives:
-        command = (
-            [executable, "x", "-o+", "-idq", str(archive), f"{output_dir}/"]
-            if backend == "unrar"
-            else [executable, "x", "-y", f"-o{output_dir}", str(archive)]
-        )
+        if backend == "unrar":
+            command = [executable, "x", "-o+", "-idq", str(archive), f"{output_dir}/"]
+        elif backend == "unar":
+            command = [executable, "-f", "-o", str(output_dir), str(archive)]
+        else:
+            command = [executable, "x", "-y", f"-o{output_dir}", str(archive)]
         if dry_run:
             print("Would run:", " ".join(command))
         else:
