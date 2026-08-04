@@ -64,6 +64,23 @@ COLORS = {
 MARKERS = ("o", "s", "^", "D", "P", "X", "v")
 
 
+def _domain_labels(
+    reports: dict[str, list[dict[str, Any]]], domains: list[int]
+) -> list[str]:
+    dataset = next(iter(reports.values()))[0].get("dataset", "")
+    if dataset in {"multidomain8", "multidomain16"}:
+        bearings = ("6204", "N204/NJ204", "30204")
+        environments = ("A", "B", "C")
+        speed_groups = ("slow", "fast")
+        return [
+            f"{bearings[domain // 6]}\n{environments[(domain % 6) // 2]} | {speed_groups[domain % 2]}"
+            for domain in domains
+        ]
+    if dataset == "hustbearing":
+        return [f"{domain} Hz" for domain in domains]
+    return [f"Domain {domain}" for domain in domains]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -294,6 +311,7 @@ def _plot_stage_trajectory(
     reports: dict[str, list[dict[str, Any]]],
     jobs: list[str],
     domains: list[int],
+    domain_labels: list[str],
 ) -> plt.Figure:
     figure, axis = plt.subplots(figsize=(8.2, 4.2))
     x = np.arange(len(domains))
@@ -322,7 +340,7 @@ def _plot_stage_trajectory(
             label=f"{SHORT_LABELS.get(job, job)} (n={len(values)})",
         )
         axis.fill_between(x, mean - std, mean + std, color=color, alpha=0.13)
-    axis.set_xticks(x, [f"{domain} Hz" for domain in domains], rotation=25)
+    axis.set_xticks(x, domain_labels)
     axis.set_xlabel("Continual training stage")
     axis.set_ylabel("Seen-condition balanced accuracy (%)")
     axis.set_title("Performance evolution along the operating-condition stream")
@@ -351,6 +369,7 @@ def _annotated_heatmap(
     axis: plt.Axes,
     matrix: np.ndarray,
     domains: list[int],
+    domain_labels: list[str],
     *,
     title: str,
     cmap: str,
@@ -370,10 +389,10 @@ def _annotated_heatmap(
         vmax=vmax,
         aspect="equal",
     )
-    axis.set_xticks(np.arange(len(domains)), [str(value) for value in domains], rotation=35)
-    axis.set_yticks(np.arange(len(domains)), [str(value) for value in domains])
-    axis.set_xlabel("Evaluation speed (Hz)")
-    axis.set_ylabel("Training completed through (Hz)")
+    axis.set_xticks(np.arange(len(domains)), domain_labels, rotation=20)
+    axis.set_yticks(np.arange(len(domains)), domain_labels)
+    axis.set_xlabel("Evaluation condition")
+    axis.set_ylabel("Training completed through condition")
     axis.set_title(title)
     for row in range(matrix.shape[0]):
         for column in range(matrix.shape[1]):
@@ -396,6 +415,7 @@ def _annotated_heatmap(
 def _plot_accuracy_matrix(
     reports: list[dict[str, Any]],
     domains: list[int],
+    domain_labels: list[str],
     job: str,
 ) -> plt.Figure:
     matrices = np.asarray(
@@ -409,6 +429,7 @@ def _plot_accuracy_matrix(
         axes[0],
         mean,
         domains,
+        domain_labels,
         title="Mean balanced accuracy",
         cmap="YlGnBu",
         vmin=0.0,
@@ -419,6 +440,7 @@ def _plot_accuracy_matrix(
         axes[1],
         std,
         domains,
+        domain_labels,
         title="Across-seed standard deviation",
         cmap="OrRd",
         vmin=0.0,
@@ -440,6 +462,7 @@ def _plot_domain_profiles(
     reports: dict[str, list[dict[str, Any]]],
     jobs: list[str],
     domains: list[int],
+    domain_labels: list[str],
 ) -> plt.Figure:
     figure, axes = plt.subplots(1, 2, figsize=(11.2, 4.0))
     x = np.arange(len(domains))
@@ -487,15 +510,14 @@ def _plot_domain_profiles(
             color=color,
             label=label,
         )
-    labels = [str(value) for value in domains]
-    axes[0].set_xticks(x, labels, rotation=25)
-    axes[1].set_xticks(x, labels, rotation=25)
+    axes[0].set_xticks(x, domain_labels)
+    axes[1].set_xticks(x, domain_labels)
     axes[0].set_title("Final performance by condition")
     axes[1].set_title("Forgetting by previously learned condition")
     axes[0].set_ylabel("Balanced accuracy (%)")
     axes[1].set_ylabel("Forgetting (percentage points)")
     for axis in axes:
-        axis.set_xlabel("Operating speed (Hz)")
+        axis.set_xlabel("Operating condition")
         _decorate_axis(axis, zero_line=axis is axes[1])
     axes[0].legend(frameon=False, ncol=2)
     figure.suptitle("Condition-wise retention analysis", fontsize=12, fontweight="bold")
@@ -506,6 +528,7 @@ def _plot_domain_profiles(
 def _plot_class_recall(
     reports: list[dict[str, Any]],
     domains: list[int],
+    domain_labels: list[str],
     class_names: list[str],
     job: str,
 ) -> plt.Figure:
@@ -528,7 +551,7 @@ def _plot_class_recall(
     figure, axis = plt.subplots(figsize=(10.6, 5.2))
     image = axis.imshow(mean, cmap="YlGnBu", vmin=0.0, vmax=100.0, aspect="auto")
     axis.set_xticks(np.arange(len(class_names)), class_names, rotation=28, ha="right")
-    axis.set_yticks(np.arange(len(domains)), [f"{value} Hz" for value in domains])
+    axis.set_yticks(np.arange(len(domains)), domain_labels)
     axis.set_xlabel("Fault class")
     axis.set_ylabel("Evaluation condition")
     axis.set_title(
@@ -578,6 +601,7 @@ def main() -> int:
     )
     reports = _load_reports(root, requested_jobs)
     domains, class_names = _validate_contract(reports)
+    domain_labels = _domain_labels(reports, domains)
     jobs = _job_order(reports, Path(args.matrix))
     output_dir = Path(args.output_dir) if args.output_dir else root / "figures"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -610,14 +634,14 @@ def main() -> int:
             args.dpi,
         )
         artifacts["fig02_stage_trajectory"] = _save(
-            _plot_stage_trajectory(reports, core_jobs, domains),
+            _plot_stage_trajectory(reports, core_jobs, domains, domain_labels),
             output_dir,
             "fig02_stage_trajectory",
             formats,
             args.dpi,
         )
         artifacts["fig04_condition_retention"] = _save(
-            _plot_domain_profiles(reports, core_jobs, domains),
+            _plot_domain_profiles(reports, core_jobs, domains, domain_labels),
             output_dir,
             "fig04_condition_retention",
             formats,
@@ -640,7 +664,7 @@ def main() -> int:
 
     focus_job = "se_gscl_full" if "se_gscl_full" in reports else jobs[0]
     artifacts["fig03_continual_accuracy_matrix"] = _save(
-        _plot_accuracy_matrix(reports[focus_job], domains, focus_job),
+        _plot_accuracy_matrix(reports[focus_job], domains, domain_labels, focus_job),
         output_dir,
         "fig03_continual_accuracy_matrix",
         formats,
@@ -650,6 +674,7 @@ def main() -> int:
         _plot_class_recall(
             reports[focus_job],
             domains,
+            domain_labels,
             class_names,
             focus_job,
         ),
