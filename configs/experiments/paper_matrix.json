@@ -16,6 +16,17 @@
     "raw_and_controlled_llm_metrics_separated": true
   },
   "datasets": {
+    "multidomain8": {
+      "role": "primary_multifactor",
+      "domain_order": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+      "ontology": "configs/semantics/bearing_faults_4.json",
+      "global_text_cache": "results/semantic_cache/qwen25_7b_bearing4_v1",
+      "symptom_text_cache": "results/semantic_cache/qwen25_7b_bearing4_symptoms_physics_v1",
+      "window_size": 1024,
+      "step_size": 1024,
+      "max_windows_per_file": 120,
+      "replay_per_class": 20
+    },
     "cwru4": {
       "role": "primary",
       "domain_order": [0, 1, 2, 3],

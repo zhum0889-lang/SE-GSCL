@@ -1,0 +1,21 @@
+dataset: multidomain8
+label_space:
+  - Healthy
+  - InnerRace
+  - Ball
+  - OuterRace
+domain_order: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+domain_definition: bearing_group x environment_group x speed_group
+sampling_rate_hz: 8000
+window_size: 1024
+step_size: 1024
+max_windows_per_file: 120
+replay_per_class: 20
+split:
+  strategy: blocked_with_guard
+  train_ratio: 0.6
+  val_ratio: 0.2
+notes:
+  - Domains reproduce the 18 composite conditions from the referenced protocol.
+  - Raw Data is used; Spectrogram is not used by the 1D signal specialist.
+  - The 16 kHz records are reserved for sampling-rate robustness experiments.

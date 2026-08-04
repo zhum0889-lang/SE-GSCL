@@ -153,11 +153,12 @@ def command_text(command: Sequence[str]) -> str:
 
 
 def dataset_root_candidates(dataset: str) -> list[Path]:
-    names = (
-        ("CWRU", "cwru")
-        if dataset.startswith("cwru")
-        else ("HUSTbearing", "HUSTBearing", "hustbearing")
-    )
+    if dataset.startswith("cwru"):
+        names = ("CWRU", "cwru")
+    elif dataset.startswith("multidomain"):
+        names = ("MultiDomainBearing", "multidomainbearing")
+    else:
+        names = ("HUSTbearing", "HUSTBearing", "hustbearing")
     bases = (ROOT / "data", ROOT.parent / "data")
     return [base / name for base in bases for name in names]
 

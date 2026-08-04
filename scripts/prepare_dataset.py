@@ -20,7 +20,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dataset",
-        choices=("cwru4", "cwru10", "cwru19", "paderborn", "hustbearing"),
+        choices=(
+            "cwru4",
+            "cwru10",
+            "cwru19",
+            "paderborn",
+            "hustbearing",
+            "multidomain8",
+            "multidomain16",
+        ),
         required=True,
     )
     parser.add_argument("--data-root", type=Path, required=True)

@@ -130,6 +130,18 @@ def load_records(
         return load_hustbearing(data_root, domains=domains)
     if dataset == "paderborn":
         return load_paderborn(data_root, domains=domains)
+    if dataset == "multidomain8":
+        return load_multidomain_bearing(
+            data_root,
+            domains=domains,
+            sampling_rate=8000,
+        )
+    if dataset == "multidomain16":
+        return load_multidomain_bearing(
+            data_root,
+            domains=domains,
+            sampling_rate=16000,
+        )
     if dataset == "metadata":
         if metadata_csv is None:
             raise ValueError("--metadata-csv is required when --dataset metadata")
@@ -167,6 +179,41 @@ PADERBORN_DOMAINS = {
     (1500, 0.1, 1000): 2,
     (1500, 0.7, 400): 3,
 }
+
+
+MULTIDOMAIN_FILE_RE = re.compile(
+    r"^(?P<environment>H|M[123]|U[123]|L)_"
+    r"(?P<fault>H|B|IR|OR)_"
+    r"(?P<sampling_khz>8|16)_"
+    r"(?P<bearing>[A-Z0-9]+)_"
+    r"(?P<speed>600|800|1000|1200|1400|1600)\.mat$",
+    re.IGNORECASE,
+)
+
+MULTIDOMAIN_LABELS = {
+    "H": (0, "Healthy", "normal"),
+    "IR": (1, "InnerRace", "inner race"),
+    "B": (2, "Ball", "ball"),
+    "OR": (3, "OuterRace", "outer race"),
+}
+
+# These condition sets reproduce the compound-domain construction reported by
+# Risca et al. A raw baseline/environment recording can occur in more than one
+# protocol domain; its source_record_id remains unchanged for auditability.
+MULTIDOMAIN_ENVIRONMENT_GROUPS = (
+    ("A", frozenset({"H", "M1", "U1", "L"})),
+    ("B", frozenset({"H", "U1", "U2", "U3"})),
+    ("C", frozenset({"H", "M1", "M2", "M3"})),
+)
+MULTIDOMAIN_SPEED_GROUPS = (
+    ("slow", frozenset({600, 800, 1000})),
+    ("fast", frozenset({1200, 1400, 1600})),
+)
+MULTIDOMAIN_BEARING_GROUPS = (
+    ("6204", "subset1_6204_deep_groove_ball"),
+    ("N204_NJ204", "subset2_N204_NJ204_cylindrical_roller"),
+    ("30204", "subset3_30204_tapered_roller"),
+)
 
 
 def load_hustbearing(
@@ -518,6 +565,121 @@ def load_paderborn(
     return records
 
 
+def load_multidomain_bearing(
+    data_root: Path,
+    domains: Optional[Iterable[int]] = None,
+    sampling_rate: int = 8000,
+) -> list[RawRecord]:
+    """Load the Mendeley multi-domain bearing protocol as 18 composite domains.
+
+    Each MATLAB file stores a raw one-dimensional ``Data`` vector. File names
+    encode environment, fault identity, sampling rate, bearing identifier and
+    speed. The protocol domain is the Cartesian product of three bearing
+    groups, three compound-environment groups and two speed groups. Files in
+    overlapping environment groups are deliberately represented in each
+    applicable protocol domain, matching the referenced continual-learning
+    setup while retaining a shared source_record_id for leakage audits.
+    """
+
+    if sampling_rate not in {8000, 16000}:
+        raise ValueError("sampling_rate must be either 8000 or 16000.")
+    wanted_domains = None if domains is None else {int(value) for value in domains}
+    root = _resolve_multidomain_data_root(data_root)
+    records: list[RawRecord] = []
+    unmatched: list[str] = []
+
+    subset_to_group = {
+        subset: (group_index, group_name)
+        for group_index, (group_name, subset) in enumerate(MULTIDOMAIN_BEARING_GROUPS)
+    }
+    for path in sorted(root.rglob("*.mat")):
+        relative = path.relative_to(root).as_posix()
+        subset = path.relative_to(root).parts[0]
+        bearing_group = subset_to_group.get(subset)
+        if bearing_group is None:
+            continue
+        match = MULTIDOMAIN_FILE_RE.match(path.name)
+        if match is None:
+            if len(unmatched) < 12:
+                unmatched.append(relative)
+            continue
+
+        environment = match.group("environment").upper()
+        fault_code = match.group("fault").upper()
+        rate_hz = int(match.group("sampling_khz")) * 1000
+        speed_rpm = int(match.group("speed"))
+        if rate_hz != sampling_rate:
+            continue
+        if fault_code not in MULTIDOMAIN_LABELS:
+            raise ValueError(f"Unsupported fault code {fault_code!r} in {relative}")
+
+        label, label_name, fault_position = MULTIDOMAIN_LABELS[fault_code]
+        bearing_index, protocol_bearing = bearing_group
+        environment_matches = [
+            (index, name)
+            for index, (name, members) in enumerate(MULTIDOMAIN_ENVIRONMENT_GROUPS)
+            if environment in members
+        ]
+        speed_match = next(
+            (
+                (index, name)
+                for index, (name, members) in enumerate(MULTIDOMAIN_SPEED_GROUPS)
+                if speed_rpm in members
+            ),
+            None,
+        )
+        if speed_match is None:
+            raise ValueError(f"Unsupported speed {speed_rpm} in {relative}")
+        speed_index, speed_group = speed_match
+
+        for environment_index, environment_group in environment_matches:
+            domain_id = bearing_index * 6 + environment_index * 2 + speed_index
+            if wanted_domains is not None and domain_id not in wanted_domains:
+                continue
+            records.append(
+                RawRecord(
+                    signal=_load_multidomain_signal(path),
+                    label=label,
+                    label_name=label_name,
+                    file_id=relative,
+                    split="unsplit",
+                    sampling_rate=float(rate_hz),
+                    load=float(domain_id),
+                    bearing_position="test bearing",
+                    fault_position=fault_position,
+                    domain_id=domain_id,
+                    condition_name=(
+                        f"{protocol_bearing}|env_{environment_group}|"
+                        f"{speed_group}|{speed_rpm}rpm"
+                    ),
+                    sampling_channels=("Data",),
+                    dataset_name=f"multidomain{rate_hz // 1000}",
+                    source_record_id=relative,
+                    bearing_id=protocol_bearing,
+                    sensor_id="Data",
+                    speed_rpm=float(speed_rpm),
+                )
+            )
+
+    if not records:
+        suffix_hint = (
+            "Expected extracted/subset*/.../"
+            "<environment>_<fault>_<8|16>_<bearing>_<speed>.mat"
+        )
+        raise FileNotFoundError(
+            f"No supported MultiDomainBearing records found under {root} "
+            f"for sampling_rate={sampling_rate}. {suffix_hint}"
+        )
+    if unmatched:
+        preview = "; ".join(unmatched)
+        raise ValueError(
+            "Found MultiDomainBearing MAT files with unsupported names. "
+            f"Examples: {preview}"
+        )
+    _assert_multidomain_coverage(records, wanted_domains)
+    return records
+
+
 def load_from_metadata(data_root: Path, metadata_csv: Path) -> list[RawRecord]:
     records: list[RawRecord] = []
     with metadata_csv.open("r", encoding="utf-8-sig", newline="") as f:
@@ -669,6 +831,56 @@ def _load_paderborn_channel(path: Path, channel: str) -> np.ndarray:
             return data
     available = [str(_mat_field(entry, "Name")) for entry in channels]
     raise KeyError(f"Paderborn channel {channel!r} not found in {path}; available={available}")
+
+
+def _resolve_multidomain_data_root(data_root: Path) -> Path:
+    """Accept either MultiDomainBearing/ or its extracted/ directory."""
+
+    direct = data_root / "extracted"
+    if direct.is_dir():
+        return direct
+    if data_root.is_dir():
+        return data_root
+    raise FileNotFoundError(f"MultiDomainBearing root does not exist: {data_root}")
+
+
+def _load_multidomain_signal(path: Path) -> np.ndarray:
+    mat = loadmat(path, squeeze_me=True, struct_as_record=False)
+    if "Data" not in mat:
+        raise KeyError(f"MultiDomainBearing MAT file has no 'Data' vector: {path}")
+    signal = np.asarray(mat["Data"], dtype=np.float32).reshape(-1)
+    if signal.size < 1024:
+        raise ValueError(f"MultiDomainBearing Data vector is too short in {path}")
+    if not np.isfinite(signal).all():
+        raise ValueError(f"MultiDomainBearing Data vector contains non-finite values in {path}")
+    return signal
+
+
+def _assert_multidomain_coverage(
+    records: list[RawRecord],
+    wanted_domains: Optional[set[int]],
+) -> None:
+    """Fail early when a requested composite domain lacks a fault class."""
+
+    requested = (
+        sorted(wanted_domains)
+        if wanted_domains is not None
+        else list(range(len(MULTIDOMAIN_BEARING_GROUPS) * 6))
+    )
+    observed: dict[int, set[int]] = {}
+    for record in records:
+        observed.setdefault(record.domain_id, set()).add(record.label)
+    expected = set(range(len(MULTIDOMAIN_LABELS)))
+    incomplete = {
+        domain: sorted(expected - observed.get(domain, set()))
+        for domain in requested
+        if observed.get(domain, set()) != expected
+    }
+    if incomplete:
+        raise ValueError(
+            "MultiDomainBearing domain/class coverage is incomplete. "
+            f"Missing labels by domain: {incomplete}"
+        )
 
 
 def _mat_field(value: object, name: str) -> object:
