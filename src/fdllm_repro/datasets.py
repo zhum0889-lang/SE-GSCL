@@ -191,7 +191,7 @@ MULTIDOMAIN_FILE_RE = re.compile(
 )
 
 MULTIDOMAIN_LABELS = {
-    "H": (0, "Healthy", "normal"),
+    "H": (0, "Normal", "normal"),
     "IR": (1, "InnerRace", "inner race"),
     "B": (2, "Ball", "ball"),
     "OR": (3, "OuterRace", "outer race"),

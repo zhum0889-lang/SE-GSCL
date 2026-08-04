@@ -34,7 +34,7 @@ def test_multidomain8_loader_parses_raw_filename_protocol(monkeypatch, tmp_path:
 
     assert len(records) == 4
     assert {record.label_name for record in records} == {
-        "Healthy",
+        "Normal",
         "InnerRace",
         "Ball",
         "OuterRace",

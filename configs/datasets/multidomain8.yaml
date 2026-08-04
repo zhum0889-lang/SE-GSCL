@@ -1,6 +1,6 @@
 dataset: multidomain8
 label_space:
-  - Healthy
+- Normal
   - InnerRace
   - Ball
   - OuterRace

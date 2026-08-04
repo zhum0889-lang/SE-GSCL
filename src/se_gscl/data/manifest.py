@@ -28,8 +28,8 @@ EXPECTED_LABELS = {
         "Compound_Medium",
         "Compound_Severe",
     },
-    "multidomain8": {"Healthy", "InnerRace", "Ball", "OuterRace"},
-    "multidomain16": {"Healthy", "InnerRace", "Ball", "OuterRace"},
+    "multidomain8": {"Normal", "InnerRace", "Ball", "OuterRace"},
+    "multidomain16": {"Normal", "InnerRace", "Ball", "OuterRace"},
 }
 
 
