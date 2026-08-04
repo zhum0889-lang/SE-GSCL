@@ -31,6 +31,12 @@ except ModuleNotFoundError as error:  # pragma: no cover - environment guard
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_JOBS = ("finetune", "lwf_relation", "experience_replay", "se_gscl_full")
+STRATEGY_DIRECTORY_ALIASES = {
+    "sequential": "finetune",
+    "lwf": "lwf_relation",
+    "balanced_replay": "experience_replay",
+    "full": "se_gscl_full",
+}
 ABLATION_JOBS = (
     "se_gscl_full",
     "wo_cross_condition",
@@ -102,7 +108,7 @@ def _load_reports(
 ) -> dict[str, list[dict[str, Any]]]:
     reports: dict[str, list[dict[str, Any]]] = {}
     for path in sorted(root.glob("seed_*/*/p1_report.json")):
-        job = path.parent.name
+        job = STRATEGY_DIRECTORY_ALIASES.get(path.parent.name, path.parent.name)
         if requested_jobs is not None and job not in requested_jobs:
             continue
         report = json.loads(path.read_text(encoding="utf-8-sig"))
