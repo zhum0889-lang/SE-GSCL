@@ -518,6 +518,9 @@ def main() -> int:
         model_kwargs[dtype_key] = dtype_map[args.dtype]
     model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
     device = torch.device(args.device)
+    # Qwen is a fixed semantic reasoner in P3.1. Gradients still pass through
+    # its forward computation to the prompt embeddings, but no LLM parameter
+    # is optimized or stored in the P3 checkpoint.
     model.to(device).requires_grad_(False)
     model.config.use_cache = False
     if args.gradient_checkpointing:
@@ -550,6 +553,8 @@ def main() -> int:
         len(class_names),
         device,
     )
+    # Restrict optimization to the low-rank prompt adapter. This makes the
+    # experiment test continuous semantic prompting rather than LLM fine-tuning.
     optimizer = torch.optim.AdamW(
         adapter.parameters(),
         lr=args.learning_rate,
@@ -605,12 +610,16 @@ def main() -> int:
                 targets,
                 tokenizer.pad_token_id,
             )
+            # Teacher-forced language-model loss trains the adapter to make the
+            # frozen LLM emit the class name from continuous prompt tokens.
             lm_loss = model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention,
                 labels=lm_labels,
                 use_cache=False,
             ).loss
+            # The auxiliary probe stabilizes class separation in prompt space;
+            # it is not the final diagnostic output reported for P3.1.
             auxiliary_loss = torch.nn.functional.cross_entropy(
                 adapter.classification_logits(prompt_embeddings),
                 labels,
@@ -631,6 +640,8 @@ def main() -> int:
                 float(auxiliary_loss.detach().cpu()) * len(labels)
             )
             samples += len(labels)
+        # Select the adapter checkpoint using held-out source-condition data;
+        # labels from unseen test conditions remain unavailable during training.
         validation_losses = _validation_loss(
             validation_loader,
             adapter,

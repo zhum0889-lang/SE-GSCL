@@ -73,11 +73,12 @@ def _command_text(command: Sequence[str]) -> str:
 
 
 def _dataset_root_candidates(dataset: str) -> list[Path]:
-    names = (
-        ("CWRU", "cwru")
-        if dataset.startswith("cwru")
-        else ("HUSTbearing", "HUSTBearing", "hustbearing")
-    )
+    if dataset.startswith("cwru"):
+        names = ("CWRU", "cwru")
+    elif dataset.startswith("multidomain"):
+        names = ("MultiDomainBearing", "multidomainbearing")
+    else:
+        names = ("HUSTbearing", "HUSTBearing", "hustbearing")
     bases = (ROOT / "data", ROOT.parent / "data")
     return [base / name for base in bases for name in names]
 
@@ -318,6 +319,21 @@ def main() -> int:
         missing = [str(path) for path in required if not path.exists()]
         if missing:
             raise FileNotFoundError(f"Missing downstream inputs: {missing}")
+        if dataset_config.get("role") == "primary_multifactor":
+            physics_jobs = [
+                str(job["id"])
+                for job in p2_jobs
+                if bool(job.get("physics_guided"))
+            ]
+            if physics_jobs:
+                raise ValueError(
+                    "MultiDomainBearing contains multiple bearing families, but "
+                    "validated kinematic ratios have not yet been registered for "
+                    "every family. Refusing physics-guided P2 jobs "
+                    f"{physics_jobs} rather than silently using an unrelated "
+                    "bearing prior. Run the P1 continual-learning matrix first, "
+                    "or register verified per-bearing kinematics before P2/P3."
+                )
 
     command_rows: list[str] = []
     for seed in seeds:
