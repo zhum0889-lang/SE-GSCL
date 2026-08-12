@@ -319,7 +319,7 @@ def main() -> int:
         missing = [str(path) for path in required if not path.exists()]
         if missing:
             raise FileNotFoundError(f"Missing downstream inputs: {missing}")
-        if dataset_config.get("role") == "primary_multifactor":
+        if args.dataset.startswith("multidomain"):
             physics_jobs = [
                 str(job["id"])
                 for job in p2_jobs

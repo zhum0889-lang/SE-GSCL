@@ -142,6 +142,20 @@ def load_records(
             domains=domains,
             sampling_rate=16000,
         )
+    if dataset == "multidomain8_atomic":
+        return load_multidomain_bearing(
+            data_root,
+            domains=domains,
+            sampling_rate=8000,
+            protocol="atomic",
+        )
+    if dataset == "multidomain16_atomic":
+        return load_multidomain_bearing(
+            data_root,
+            domains=domains,
+            sampling_rate=16000,
+            protocol="atomic",
+        )
     if dataset == "metadata":
         if metadata_csv is None:
             raise ValueError("--metadata-csv is required when --dataset metadata")
@@ -209,6 +223,7 @@ MULTIDOMAIN_SPEED_GROUPS = (
     ("slow", frozenset({600, 800, 1000})),
     ("fast", frozenset({1200, 1400, 1600})),
 )
+MULTIDOMAIN_ATOMIC_ENVIRONMENTS = ("H", "M1", "M2", "M3", "U1", "U2", "U3", "L")
 MULTIDOMAIN_BEARING_GROUPS = (
     ("6204", "subset1_6204_deep_groove_ball"),
     ("N204_NJ204", "subset2_N204_NJ204_cylindrical_roller"),
@@ -569,8 +584,9 @@ def load_multidomain_bearing(
     data_root: Path,
     domains: Optional[Iterable[int]] = None,
     sampling_rate: int = 8000,
+    protocol: str = "overlap18",
 ) -> list[RawRecord]:
-    """Load the Mendeley multi-domain bearing protocol as 18 composite domains.
+    """Load either the published 18-domain or source-disjoint 48-domain protocol.
 
     Each MATLAB file stores a raw one-dimensional ``Data`` vector. File names
     encode environment, fault identity, sampling rate, bearing identifier and
@@ -578,11 +594,15 @@ def load_multidomain_bearing(
     groups, three compound-environment groups and two speed groups. Files in
     overlapping environment groups are deliberately represented in each
     applicable protocol domain, matching the referenced continual-learning
-    setup while retaining a shared source_record_id for leakage audits.
+    setup while retaining a shared source_record_id for leakage audits. The
+    ``atomic`` protocol instead treats every measured environment as a distinct
+    condition, so each raw recording belongs to exactly one of 48 domains.
     """
 
     if sampling_rate not in {8000, 16000}:
         raise ValueError("sampling_rate must be either 8000 or 16000.")
+    if protocol not in {"overlap18", "atomic"}:
+        raise ValueError("protocol must be either 'overlap18' or 'atomic'.")
     wanted_domains = None if domains is None else {int(value) for value in domains}
     root = _resolve_multidomain_data_root(data_root)
     records: list[RawRecord] = []
@@ -615,11 +635,16 @@ def load_multidomain_bearing(
 
         label, label_name, fault_position = MULTIDOMAIN_LABELS[fault_code]
         bearing_index, protocol_bearing = bearing_group
-        environment_matches = [
-            (index, name)
-            for index, (name, members) in enumerate(MULTIDOMAIN_ENVIRONMENT_GROUPS)
-            if environment in members
-        ]
+        if protocol == "atomic":
+            environment_matches = [
+                (MULTIDOMAIN_ATOMIC_ENVIRONMENTS.index(environment), environment)
+            ]
+        else:
+            environment_matches = [
+                (index, name)
+                for index, (name, members) in enumerate(MULTIDOMAIN_ENVIRONMENT_GROUPS)
+                if environment in members
+            ]
         speed_match = next(
             (
                 (index, name)
@@ -633,7 +658,12 @@ def load_multidomain_bearing(
         speed_index, speed_group = speed_match
 
         for environment_index, environment_group in environment_matches:
-            domain_id = bearing_index * 6 + environment_index * 2 + speed_index
+            domains_per_bearing = 16 if protocol == "atomic" else 6
+            domain_id = (
+                bearing_index * domains_per_bearing
+                + environment_index * 2
+                + speed_index
+            )
             if wanted_domains is not None and domain_id not in wanted_domains:
                 continue
             records.append(
@@ -653,7 +683,11 @@ def load_multidomain_bearing(
                         f"{speed_group}|{speed_rpm}rpm"
                     ),
                     sampling_channels=("Data",),
-                    dataset_name=f"multidomain{rate_hz // 1000}",
+                    dataset_name=(
+                        f"multidomain{rate_hz // 1000}_atomic"
+                        if protocol == "atomic"
+                        else f"multidomain{rate_hz // 1000}"
+                    ),
                     source_record_id=relative,
                     bearing_id=protocol_bearing,
                     sensor_id="Data",
@@ -676,7 +710,11 @@ def load_multidomain_bearing(
             "Found MultiDomainBearing MAT files with unsupported names. "
             f"Examples: {preview}"
         )
-    _assert_multidomain_coverage(records, wanted_domains)
+    _assert_multidomain_coverage(
+        records,
+        wanted_domains,
+        domain_count=(48 if protocol == "atomic" else 18),
+    )
     return records
 
 
@@ -859,13 +897,14 @@ def _load_multidomain_signal(path: Path) -> np.ndarray:
 def _assert_multidomain_coverage(
     records: list[RawRecord],
     wanted_domains: Optional[set[int]],
+    domain_count: int = 18,
 ) -> None:
     """Fail early when a requested composite domain lacks a fault class."""
 
     requested = (
         sorted(wanted_domains)
         if wanted_domains is not None
-        else list(range(len(MULTIDOMAIN_BEARING_GROUPS) * 6))
+        else list(range(domain_count))
     )
     observed: dict[int, set[int]] = {}
     for record in records:

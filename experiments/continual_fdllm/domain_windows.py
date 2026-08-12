@@ -96,7 +96,20 @@ def build_domain_window_dataset(
             label_names.append(rec.label_name)
             condition_names.append(rec.condition_name or f"domain_{domain_id}")
             source_id = rec.source_record_id or rec.file_id
-            group_id = rec.bearing_id or source_id
+            # Atomic MultiDomainBearing domains contain three exact speeds
+            # inside each slow/fast group. Split by exact speed so every class
+            # uses the same speed for train/validation/test, while keeping raw
+            # source recordings mutually exclusive across those splits.
+            record_dataset = rec.dataset_name or dataset
+            group_id = (
+                f"{rec.bearing_id}|{int(rec.speed_rpm or 0)}rpm"
+                if record_dataset.endswith("_atomic")
+                else (
+                    source_id
+                    if record_dataset.startswith("multidomain")
+                    else rec.bearing_id or source_id
+                )
+            )
             group_ids.append(group_id)
             source_record_ids.append(source_id)
             dataset_names.append(rec.dataset_name or dataset)
@@ -217,6 +230,9 @@ def build_protocol_splits(
     domain_all = np.asarray(dataset["domain_id"], dtype=np.int64)
     file_all = np.asarray(dataset["file_id"], dtype=object)
     group_all = np.asarray(dataset.get("group_id", dataset["file_id"]), dtype=object)
+    dataset_names = set(str(v) for v in dataset.get("dataset_name", []))
+    atomic_protocol = any(name.endswith("_atomic") for name in dataset_names)
+    split_seed = 1729 if atomic_protocol else seed
     start_all = np.asarray(dataset["window_start"], dtype=np.int64)
     window_size = int(dataset.get("window_size", 1))
     step_size = max(1, int(dataset.get("step_size", window_size)))
@@ -232,12 +248,12 @@ def build_protocol_splits(
             group_mask = (domain_all == domain) & (y_all == int(label))
             label_indices = np.flatnonzero(group_mask)
             groups = sorted(set(str(v) for v in group_all[label_indices]))
-            if len(groups) >= 3:
+            if len(groups) >= 3 or (atomic_protocol and len(groups) >= 2):
                 assignments = _assign_file_groups(
                     groups,
                     train_ratio,
                     val_ratio,
-                    seed + domain * 1009 + int(label),
+                    split_seed + domain * 1009 + (0 if atomic_protocol else int(label)),
                 )
                 for split, split_groups in assignments.items():
                     chosen = label_indices[
@@ -251,7 +267,11 @@ def build_protocol_splits(
                                 int(label),
                                 group_id,
                                 split,
-                                "bearing_group" if "bearing_id" in dataset else "record_group",
+                                (
+                                    "exact_speed_group"
+                                    if atomic_protocol
+                                    else "bearing_group"
+                                ),
                                 int(np.sum(group_all[chosen] == group_id)),
                             )
                         )
@@ -285,8 +305,34 @@ def build_protocol_splits(
         train_by_domain[domain] = subset_by_indices(dataset, split_indices["train"])
         val_by_domain[domain] = subset_by_indices(dataset, split_indices["val"])
         test_by_domain[domain] = subset_by_indices(dataset, split_indices["test"])
+        if atomic_protocol:
+            assert_no_source_record_leakage(
+                train_by_domain[domain],
+                val_by_domain[domain],
+                test_by_domain[domain],
+            )
 
     return train_by_domain, val_by_domain, test_by_domain, audit
+
+
+def assert_no_source_record_leakage(
+    train_ds: DomainWindowDataset,
+    val_ds: DomainWindowDataset,
+    test_ds: DomainWindowDataset,
+) -> None:
+    """Raise when one raw recording appears in more than one data split."""
+
+    splits = {"train": train_ds, "val": val_ds, "test": test_ds}
+    sources = {
+        name: set(str(v) for v in ds.get("source_record_id", ds["file_id"]))
+        for name, ds in splits.items()
+    }
+    for left, right in (("train", "val"), ("train", "test"), ("val", "test")):
+        overlap = sources[left] & sources[right]
+        if overlap:
+            raise AssertionError(
+                f"{left}/{right} share raw source records: {sorted(overlap)[:5]}"
+            )
 
 
 def assert_no_window_leakage(
@@ -476,6 +522,10 @@ def _assign_file_groups(
     shuffled = list(files)
     rng.shuffle(shuffled)
     n = len(shuffled)
+    if n < 2:
+        raise ValueError("At least two source groups are required for a train/test split.")
+    if n == 2:
+        return {"train": shuffled[:1], "val": [], "test": shuffled[1:]}
     n_train = min(n - 2, max(1, int(round(n * train_ratio))))
     n_val = min(n - n_train - 1, max(1, int(round(n * val_ratio))))
     return {

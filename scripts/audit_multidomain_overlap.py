@@ -1,9 +1,10 @@
-"""Audit raw-record reuse in the MultiDomainBearing 18-domain protocol.
+"""Audit raw-record reuse in MultiDomainBearing continual-learning protocols.
 
 The published compound-domain construction intentionally reuses some
 environment recordings across domain definitions. This utility quantifies that
 reuse before continual-learning results are interpreted as independent-domain
-evidence. It does not modify data or splits.
+evidence. The atomic 48-domain alternative should report zero reuse. This
+utility does not modify data or splits.
 """
 
 from __future__ import annotations
@@ -30,8 +31,17 @@ def _parse_domains(value: str) -> list[int]:
     return domains
 
 
-def _domain_name(domain: int) -> str:
+def _domain_name(domain: int, protocol: str) -> str:
     bearings = ("6204", "N204/NJ204", "30204")
+    if protocol == "atomic":
+        environments = ("H", "M1", "M2", "M3", "U1", "U2", "U3", "L")
+        if domain < 0 or domain >= 48:
+            return f"domain_{domain}"
+        return (
+            f"D{domain}: {bearings[domain // 16]} | "
+            f"env_{environments[(domain % 16) // 2]} | "
+            f"{('slow', 'fast')[domain % 2]}"
+        )
     environments = ("A", "B", "C")
     speed_groups = ("slow", "fast")
     if domain < 0 or domain >= 18:
@@ -50,6 +60,7 @@ def _source_id(record: RawRecord) -> str:
 def _pair_rows(
     sources_by_domain: dict[int, set[str]],
     domains: Iterable[int],
+    protocol: str,
 ) -> list[dict[str, object]]:
     ordered = list(domains)
     rows: list[dict[str, object]] = []
@@ -62,8 +73,8 @@ def _pair_rows(
                     {
                         "left_domain": left,
                         "right_domain": right,
-                        "left_name": _domain_name(left),
-                        "right_name": _domain_name(right),
+                        "left_name": _domain_name(left, protocol),
+                        "right_name": _domain_name(right, protocol),
                         "shared_source_records": len(overlap),
                         "jaccard": len(overlap) / max(1, len(union)),
                         "examples": sorted(overlap)[:5],
@@ -76,8 +87,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--domains", default=",".join(str(i) for i in range(18)))
+    parser.add_argument("--domains", help="Comma-separated IDs; defaults to all protocol domains.")
     parser.add_argument("--sampling-rate", type=int, choices=(8000, 16000), default=8000)
+    parser.add_argument(
+        "--protocol",
+        choices=("overlap18", "atomic"),
+        default="overlap18",
+        help="Published overlapping 18-domain protocol or source-disjoint 48-domain protocol.",
+    )
     parser.add_argument(
         "--fail-on-overlap",
         action="store_true",
@@ -85,11 +102,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    domains = _parse_domains(args.domains)
+    domains = (
+        _parse_domains(args.domains)
+        if args.domains
+        else list(range(48 if args.protocol == "atomic" else 18))
+    )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    records = load_records("multidomain8" if args.sampling_rate == 8000 else "multidomain16", Path(args.data_root), domains=domains)
+    dataset = f"multidomain{args.sampling_rate // 1000}"
+    if args.protocol == "atomic":
+        dataset += "_atomic"
+    records = load_records(dataset, Path(args.data_root), domains=domains)
     sources_by_domain: dict[int, set[str]] = {domain: set() for domain in domains}
     classes_by_domain: dict[int, Counter[str]] = {domain: Counter() for domain in domains}
     domains_by_source: dict[str, set[int]] = defaultdict(set)
@@ -105,11 +129,11 @@ def main() -> int:
         for source, source_domains in domains_by_source.items()
         if len(source_domains) > 1
     }
-    pairs = _pair_rows(sources_by_domain, domains)
+    pairs = _pair_rows(sources_by_domain, domains, args.protocol)
     domain_rows = [
         {
             "domain": domain,
-            "name": _domain_name(domain),
+            "name": _domain_name(domain, args.protocol),
             "source_records": len(sources_by_domain[domain]),
             "class_records": dict(sorted(classes_by_domain[domain].items())),
         }
@@ -117,7 +141,8 @@ def main() -> int:
     ]
     report = {
         "status": "warning" if repeated else "ok",
-        "dataset": "multidomain8" if args.sampling_rate == 8000 else "multidomain16",
+        "dataset": dataset,
+        "protocol": args.protocol,
         "domains": domains,
         "raw_records_after_domain_expansion": len(records),
         "unique_source_records": len(domains_by_source),

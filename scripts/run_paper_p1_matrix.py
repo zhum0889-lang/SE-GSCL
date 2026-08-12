@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import json
 from pathlib import Path
 import shlex
@@ -171,6 +172,48 @@ def audit_dataset_protocol(
 ) -> dict[str, object] | None:
     """Run dataset-specific preflight checks before expensive matrix jobs."""
 
+    if dataset.startswith("multidomain"):
+        src_path = ROOT / "src"
+        if str(src_path) not in sys.path:
+            sys.path.insert(0, str(src_path))
+        from fdllm_repro.datasets import load_records  # noqa: PLC0415
+
+        records = load_records(
+            dataset,
+            data_root,
+            domains=dataset_config["domain_order"],
+        )
+        domains_by_source: dict[str, set[int]] = defaultdict(set)
+        for record in records:
+            source = str(record.source_record_id or record.file_id)
+            domains_by_source[source].add(int(record.domain_id))
+        repeated = {
+            source: sorted(values)
+            for source, values in domains_by_source.items()
+            if len(values) > 1
+        }
+        summary: dict[str, object] = {
+            "dataset": dataset,
+            "domains": list(dataset_config["domain_order"]),
+            "expanded_records": len(records),
+            "unique_source_records": len(domains_by_source),
+            "reused_source_records": len(repeated),
+            "reused_source_fraction": len(repeated) / max(1, len(domains_by_source)),
+            "source_disjoint": not repeated,
+            "examples": [
+                {"source_record_id": source, "domains": values}
+                for source, values in sorted(repeated.items())[:20]
+            ],
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        audit_path = output_dir / "multidomain_source_overlap.json"
+        audit_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        if dataset.endswith("_atomic") and repeated:
+            raise ValueError(
+                "Atomic MultiDomainBearing protocol unexpectedly reuses raw records. "
+                f"Inspect {audit_path}."
+            )
+        return summary
     if dataset != "hustbearing":
         return None
     src_path = ROOT / "src"

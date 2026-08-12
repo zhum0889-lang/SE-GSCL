@@ -1,6 +1,6 @@
 dataset: multidomain8
 label_space:
-- Normal
+  - Normal
   - InnerRace
   - Ball
   - OuterRace
@@ -17,5 +17,7 @@ split:
   val_ratio: 0.2
 notes:
   - Domains reproduce the 18 composite conditions from the referenced protocol.
+  - Compound environment groups overlap; use this protocol only for reproduction and comparison.
+  - Use multidomain8_atomic for source-disjoint generalization claims.
   - Raw Data is used; Spectrogram is not used by the 1D signal specialist.
   - The 16 kHz records are reserved for sampling-rate robustness experiments.

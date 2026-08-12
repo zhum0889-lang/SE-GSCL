@@ -68,6 +68,14 @@ def _domain_labels(
     reports: dict[str, list[dict[str, Any]]], domains: list[int]
 ) -> list[str]:
     dataset = next(iter(reports.values()))[0].get("dataset", "")
+    if dataset in {"multidomain8_atomic", "multidomain16_atomic"}:
+        bearings = ("6204", "N204/NJ204", "30204")
+        environments = ("H", "M1", "M2", "M3", "U1", "U2", "U3", "L")
+        speed_groups = ("slow", "fast")
+        return [
+            f"{bearings[domain // 16]}\n{environments[(domain % 16) // 2]} | {speed_groups[domain % 2]}"
+            for domain in domains
+        ]
     if dataset in {"multidomain8", "multidomain16"}:
         bearings = ("6204", "N204/NJ204", "30204")
         environments = ("A", "B", "C")

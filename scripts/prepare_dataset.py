@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
             "hustbearing",
             "multidomain8",
             "multidomain16",
+            "multidomain8_atomic",
+            "multidomain16_atomic",
         ),
         required=True,
     )
