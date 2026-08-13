@@ -3,8 +3,8 @@
 The published compound-domain construction intentionally reuses some
 environment recordings across domain definitions. This utility quantifies that
 reuse before continual-learning results are interpreted as independent-domain
-evidence. The atomic 48-domain alternative should report zero reuse. This
-utility does not modify data or splits.
+evidence. The disjoint 18-domain and atomic 48-domain alternatives should
+report zero reuse. This utility does not modify data or splits.
 """
 
 from __future__ import annotations
@@ -42,7 +42,11 @@ def _domain_name(domain: int, protocol: str) -> str:
             f"env_{environments[(domain % 16) // 2]} | "
             f"{('slow', 'fast')[domain % 2]}"
         )
-    environments = ("A", "B", "C")
+    environments = (
+        ("H-L", "U", "M")
+        if protocol == "disjoint18"
+        else ("A", "B", "C")
+    )
     speed_groups = ("slow", "fast")
     if domain < 0 or domain >= 18:
         return f"domain_{domain}"
@@ -91,9 +95,12 @@ def main() -> int:
     parser.add_argument("--sampling-rate", type=int, choices=(8000, 16000), default=8000)
     parser.add_argument(
         "--protocol",
-        choices=("overlap18", "atomic"),
+        choices=("overlap18", "disjoint18", "atomic"),
         default="overlap18",
-        help="Published overlapping 18-domain protocol or source-disjoint 48-domain protocol.",
+        help=(
+            "Published overlapping 18-domain, source-disjoint 18-domain, or "
+            "source-disjoint 48-domain protocol."
+        ),
     )
     parser.add_argument(
         "--fail-on-overlap",
@@ -113,6 +120,8 @@ def main() -> int:
     dataset = f"multidomain{args.sampling_rate // 1000}"
     if args.protocol == "atomic":
         dataset += "_atomic"
+    elif args.protocol == "disjoint18":
+        dataset += "_disjoint18"
     records = load_records(dataset, Path(args.data_root), domains=domains)
     sources_by_domain: dict[int, set[str]] = {domain: set() for domain in domains}
     classes_by_domain: dict[int, Counter[str]] = {domain: Counter() for domain in domains}

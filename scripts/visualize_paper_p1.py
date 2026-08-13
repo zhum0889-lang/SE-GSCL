@@ -84,6 +84,14 @@ def _domain_labels(
             f"{bearings[domain // 6]}\n{environments[(domain % 6) // 2]} | {speed_groups[domain % 2]}"
             for domain in domains
         ]
+    if dataset in {"multidomain8_disjoint18", "multidomain16_disjoint18"}:
+        bearings = ("6204", "N204/NJ204", "30204")
+        environments = ("H+L", "U1-U3", "M1-M3")
+        speed_groups = ("slow", "fast")
+        return [
+            f"{bearings[domain // 6]}\n{environments[(domain % 6) // 2]} | {speed_groups[domain % 2]}"
+            for domain in domains
+        ]
     if dataset == "hustbearing":
         return [f"{domain} Hz" for domain in domains]
     return [f"Domain {domain}" for domain in domains]

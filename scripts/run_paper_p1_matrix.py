@@ -208,9 +208,10 @@ def audit_dataset_protocol(
         output_dir.mkdir(parents=True, exist_ok=True)
         audit_path = output_dir / "multidomain_source_overlap.json"
         audit_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        if dataset.endswith("_atomic") and repeated:
+        if dataset.endswith(("_atomic", "_disjoint18")) and repeated:
             raise ValueError(
-                "Atomic MultiDomainBearing protocol unexpectedly reuses raw records. "
+                "Source-disjoint MultiDomainBearing protocol unexpectedly reuses "
+                "raw records. "
                 f"Inspect {audit_path}."
             )
         return summary

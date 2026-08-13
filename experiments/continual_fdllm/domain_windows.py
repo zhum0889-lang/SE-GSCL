@@ -96,14 +96,14 @@ def build_domain_window_dataset(
             label_names.append(rec.label_name)
             condition_names.append(rec.condition_name or f"domain_{domain_id}")
             source_id = rec.source_record_id or rec.file_id
-            # Atomic MultiDomainBearing domains contain three exact speeds
-            # inside each slow/fast group. Split by exact speed so every class
-            # uses the same speed for train/validation/test, while keeping raw
-            # source recordings mutually exclusive across those splits.
+            # Source-disjoint MultiDomainBearing protocols contain three exact
+            # speeds inside each slow/fast group. Split by exact speed so every
+            # class uses the same speed for train/validation/test and no raw
+            # recording crosses those splits.
             record_dataset = rec.dataset_name or dataset
             group_id = (
                 f"{rec.bearing_id}|{int(rec.speed_rpm or 0)}rpm"
-                if record_dataset.endswith("_atomic")
+                if record_dataset.endswith(("_atomic", "_disjoint18"))
                 else (
                     source_id
                     if record_dataset.startswith("multidomain")
@@ -231,8 +231,10 @@ def build_protocol_splits(
     file_all = np.asarray(dataset["file_id"], dtype=object)
     group_all = np.asarray(dataset.get("group_id", dataset["file_id"]), dtype=object)
     dataset_names = set(str(v) for v in dataset.get("dataset_name", []))
-    atomic_protocol = any(name.endswith("_atomic") for name in dataset_names)
-    split_seed = 1729 if atomic_protocol else seed
+    speed_group_protocol = any(
+        name.endswith(("_atomic", "_disjoint18")) for name in dataset_names
+    )
+    split_seed = 1729 if speed_group_protocol else seed
     start_all = np.asarray(dataset["window_start"], dtype=np.int64)
     window_size = int(dataset.get("window_size", 1))
     step_size = max(1, int(dataset.get("step_size", window_size)))
@@ -248,12 +250,14 @@ def build_protocol_splits(
             group_mask = (domain_all == domain) & (y_all == int(label))
             label_indices = np.flatnonzero(group_mask)
             groups = sorted(set(str(v) for v in group_all[label_indices]))
-            if len(groups) >= 3 or (atomic_protocol and len(groups) >= 2):
+            if len(groups) >= 3 or (speed_group_protocol and len(groups) >= 2):
                 assignments = _assign_file_groups(
                     groups,
                     train_ratio,
                     val_ratio,
-                    split_seed + domain * 1009 + (0 if atomic_protocol else int(label)),
+                    split_seed
+                    + domain * 1009
+                    + (0 if speed_group_protocol else int(label)),
                 )
                 for split, split_groups in assignments.items():
                     chosen = label_indices[
@@ -269,7 +273,7 @@ def build_protocol_splits(
                                 split,
                                 (
                                     "exact_speed_group"
-                                    if atomic_protocol
+                                    if speed_group_protocol
                                     else "bearing_group"
                                 ),
                                 int(np.sum(group_all[chosen] == group_id)),
@@ -305,7 +309,7 @@ def build_protocol_splits(
         train_by_domain[domain] = subset_by_indices(dataset, split_indices["train"])
         val_by_domain[domain] = subset_by_indices(dataset, split_indices["val"])
         test_by_domain[domain] = subset_by_indices(dataset, split_indices["test"])
-        if atomic_protocol:
+        if speed_group_protocol:
             assert_no_source_record_leakage(
                 train_by_domain[domain],
                 val_by_domain[domain],

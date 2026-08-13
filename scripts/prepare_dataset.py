@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
             "multidomain16",
             "multidomain8_atomic",
             "multidomain16_atomic",
+            "multidomain8_disjoint18",
+            "multidomain16_disjoint18",
         ),
         required=True,
     )

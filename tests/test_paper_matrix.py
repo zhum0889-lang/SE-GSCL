@@ -47,6 +47,16 @@ class PaperMatrixTests(unittest.TestCase):
             {job["strategy"] for job in self.matrix["p1_jobs"]},
         )
 
+    def test_source_disjoint_18_domain_protocol_is_primary(self) -> None:
+        primary = self.matrix["datasets"]["multidomain8_disjoint18"]
+        self.assertEqual(primary["role"], "primary_multifactor")
+        self.assertEqual(primary["domain_order"], list(range(18)))
+        self.assertGreaterEqual(primary["replay_per_class"], 18)
+        self.assertEqual(
+            self.matrix["datasets"]["multidomain8_atomic"]["role"],
+            "long_sequence_stress_test",
+        )
+
     def test_cloud_dataset_candidates_include_repository_sibling(self) -> None:
         candidates = dataset_root_candidates("cwru4")
         self.assertIn(ROOT.parent / "data" / "CWRU", candidates)

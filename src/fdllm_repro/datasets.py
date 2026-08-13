@@ -156,6 +156,20 @@ def load_records(
             sampling_rate=16000,
             protocol="atomic",
         )
+    if dataset == "multidomain8_disjoint18":
+        return load_multidomain_bearing(
+            data_root,
+            domains=domains,
+            sampling_rate=8000,
+            protocol="disjoint18",
+        )
+    if dataset == "multidomain16_disjoint18":
+        return load_multidomain_bearing(
+            data_root,
+            domains=domains,
+            sampling_rate=16000,
+            protocol="disjoint18",
+        )
     if dataset == "metadata":
         if metadata_csv is None:
             raise ValueError("--metadata-csv is required when --dataset metadata")
@@ -218,6 +232,15 @@ MULTIDOMAIN_ENVIRONMENT_GROUPS = (
     ("A", frozenset({"H", "M1", "U1", "L"})),
     ("B", frozenset({"H", "U1", "U2", "U3"})),
     ("C", frozenset({"H", "M1", "M2", "M3"})),
+)
+# Main 18-domain protocol. Unlike the reproduced compound groups above, these
+# environment families are mutually exclusive, so one raw record has exactly
+# one domain identity while the protocol still covers baseline, looseness,
+# unbalance and misalignment variations.
+MULTIDOMAIN_DISJOINT_ENVIRONMENT_GROUPS = (
+    ("H-L", frozenset({"H", "L"})),
+    ("U", frozenset({"U1", "U2", "U3"})),
+    ("M", frozenset({"M1", "M2", "M3"})),
 )
 MULTIDOMAIN_SPEED_GROUPS = (
     ("slow", frozenset({600, 800, 1000})),
@@ -586,7 +609,7 @@ def load_multidomain_bearing(
     sampling_rate: int = 8000,
     protocol: str = "overlap18",
 ) -> list[RawRecord]:
-    """Load either the published 18-domain or source-disjoint 48-domain protocol.
+    """Load an overlap-sensitive, source-disjoint 18-, or atomic 48-domain protocol.
 
     Each MATLAB file stores a raw one-dimensional ``Data`` vector. File names
     encode environment, fault identity, sampling rate, bearing identifier and
@@ -595,14 +618,19 @@ def load_multidomain_bearing(
     overlapping environment groups are deliberately represented in each
     applicable protocol domain, matching the referenced continual-learning
     setup while retaining a shared source_record_id for leakage audits. The
-    ``atomic`` protocol instead treats every measured environment as a distinct
-    condition, so each raw recording belongs to exactly one of 48 domains.
+    ``disjoint18`` groups the eight measured environments into three mutually
+    exclusive environment families and therefore assigns each recording to one
+    of 18 domains. The ``atomic`` protocol instead treats every measured
+    environment as a distinct condition, so each recording belongs to exactly
+    one of 48 domains.
     """
 
     if sampling_rate not in {8000, 16000}:
         raise ValueError("sampling_rate must be either 8000 or 16000.")
-    if protocol not in {"overlap18", "atomic"}:
-        raise ValueError("protocol must be either 'overlap18' or 'atomic'.")
+    if protocol not in {"overlap18", "disjoint18", "atomic"}:
+        raise ValueError(
+            "protocol must be one of 'overlap18', 'disjoint18', or 'atomic'."
+        )
     wanted_domains = None if domains is None else {int(value) for value in domains}
     root = _resolve_multidomain_data_root(data_root)
     records: list[RawRecord] = []
@@ -639,6 +667,19 @@ def load_multidomain_bearing(
             environment_matches = [
                 (MULTIDOMAIN_ATOMIC_ENVIRONMENTS.index(environment), environment)
             ]
+        elif protocol == "disjoint18":
+            environment_matches = [
+                (index, name)
+                for index, (name, members) in enumerate(
+                    MULTIDOMAIN_DISJOINT_ENVIRONMENT_GROUPS
+                )
+                if environment in members
+            ]
+            if len(environment_matches) != 1:
+                raise ValueError(
+                    f"Environment {environment!r} in {relative} must map to exactly "
+                    "one disjoint18 environment family."
+                )
         else:
             environment_matches = [
                 (index, name)
@@ -680,13 +721,22 @@ def load_multidomain_bearing(
                     domain_id=domain_id,
                     condition_name=(
                         f"{protocol_bearing}|env_{environment_group}|"
-                        f"{speed_group}|{speed_rpm}rpm"
+                        + (
+                            f"state_{environment}|"
+                            if protocol == "disjoint18"
+                            else ""
+                        )
+                        + f"{speed_group}|{speed_rpm}rpm"
                     ),
                     sampling_channels=("Data",),
                     dataset_name=(
                         f"multidomain{rate_hz // 1000}_atomic"
                         if protocol == "atomic"
-                        else f"multidomain{rate_hz // 1000}"
+                        else (
+                            f"multidomain{rate_hz // 1000}_disjoint18"
+                            if protocol == "disjoint18"
+                            else f"multidomain{rate_hz // 1000}"
+                        )
                     ),
                     source_record_id=relative,
                     bearing_id=protocol_bearing,

@@ -32,6 +32,8 @@ EXPECTED_LABELS = {
     "multidomain16": {"Normal", "InnerRace", "Ball", "OuterRace"},
     "multidomain8_atomic": {"Normal", "InnerRace", "Ball", "OuterRace"},
     "multidomain16_atomic": {"Normal", "InnerRace", "Ball", "OuterRace"},
+    "multidomain8_disjoint18": {"Normal", "InnerRace", "Ball", "OuterRace"},
+    "multidomain16_disjoint18": {"Normal", "InnerRace", "Ball", "OuterRace"},
 }
 
 

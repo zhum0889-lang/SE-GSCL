@@ -66,3 +66,42 @@ def test_atomic_protocol_assigns_each_source_to_one_domain(monkeypatch, tmp_path
     for record in records:
         memberships.setdefault(record.source_record_id, set()).add(record.domain_id)
     assert all(len(domains) == 1 for domains in memberships.values())
+
+
+def test_disjoint18_protocol_assigns_each_source_to_one_domain(
+    monkeypatch, tmp_path: Path
+) -> None:
+    for environment in ("H", "M1", "M2", "M3", "U1", "U2", "U3", "L"):
+        for fault in ("H", "IR", "B", "OR"):
+            _touch_record(tmp_path, f"{environment}_{fault}_8_6204_600.mat")
+
+    monkeypatch.setattr(
+        datasets,
+        "_load_multidomain_signal",
+        lambda path: np.zeros(1024, dtype=np.float32),
+    )
+    records = datasets.load_records(
+        "multidomain8_disjoint18",
+        tmp_path,
+        domains=[0, 2, 4],
+    )
+
+    assert len(records) == 32
+    assert {record.domain_id for record in records} == {0, 2, 4}
+    expected_domain = {
+        "H": 0,
+        "L": 0,
+        "U1": 2,
+        "U2": 2,
+        "U3": 2,
+        "M1": 4,
+        "M2": 4,
+        "M3": 4,
+    }
+    memberships: dict[str, set[int]] = {}
+    for record in records:
+        environment = Path(record.file_id).name.split("_", maxsplit=1)[0]
+        assert record.domain_id == expected_domain[environment]
+        assert f"state_{environment}" in record.condition_name
+        memberships.setdefault(record.source_record_id, set()).add(record.domain_id)
+    assert all(len(domains) == 1 for domains in memberships.values())
