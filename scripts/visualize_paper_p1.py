@@ -65,9 +65,16 @@ MARKERS = ("o", "s", "^", "D", "P", "X", "v")
 
 
 def _domain_labels(
-    reports: dict[str, list[dict[str, Any]]], domains: list[int]
+    reports: dict[str, list[dict[str, Any]]],
+    domains: list[int],
+    style: str = "auto",
 ) -> list[str]:
     dataset = next(iter(reports.values()))[0].get("dataset", "")
+    if style == "short" or (
+        style == "auto"
+        and dataset in {"multidomain8_disjoint18", "multidomain16_disjoint18"}
+    ):
+        return [f"D{index + 1}" for index in range(len(domains))]
     if dataset in {"multidomain8_atomic", "multidomain16_atomic"}:
         bearings = ("6204", "N204/NJ204", "30204")
         environments = ("H", "M1", "M2", "M3", "U1", "U2", "U3", "L")
@@ -97,6 +104,43 @@ def _domain_labels(
     return [f"Domain {domain}" for domain in domains]
 
 
+def _full_domain_labels(dataset: str, domains: list[int]) -> list[str]:
+    proxy_reports = {"dataset": [{"dataset": dataset}]}
+    return _domain_labels(proxy_reports, domains, style="full")
+
+
+def _write_domain_mapping(
+    path: Path,
+    dataset: str,
+    domains: list[int],
+    display_labels: list[str],
+) -> None:
+    full_labels = _full_domain_labels(dataset, domains)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=(
+                "stream_stage",
+                "display_label",
+                "internal_domain_id",
+                "full_condition",
+            ),
+        )
+        writer.writeheader()
+        for stage, (domain, display, full) in enumerate(
+            zip(domains, display_labels, full_labels, strict=True),
+            start=1,
+        ):
+            writer.writerow(
+                {
+                    "stream_stage": stage,
+                    "display_label": display,
+                    "internal_domain_id": domain,
+                    "full_condition": full.replace("\n", " | "),
+                }
+            )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -112,6 +156,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--jobs", help="Optional comma-separated job IDs.")
     parser.add_argument("--formats", default="png,pdf")
     parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument(
+        "--domain-label-style",
+        choices=("auto", "short", "full"),
+        default="auto",
+        help=(
+            "Domain tick labels. auto uses D1-D18 for the main disjoint18 "
+            "protocol and full condition names for smaller datasets."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -617,10 +670,17 @@ def main() -> int:
     )
     reports = _load_reports(root, requested_jobs)
     domains, class_names = _validate_contract(reports)
-    domain_labels = _domain_labels(reports, domains)
+    domain_labels = _domain_labels(reports, domains, style=args.domain_label_style)
     jobs = _job_order(reports, Path(args.matrix))
     output_dir = Path(args.output_dir) if args.output_dir else root / "figures"
     output_dir.mkdir(parents=True, exist_ok=True)
+    dataset = next(iter(reports.values()))[0].get("dataset", "")
+    _write_domain_mapping(
+        output_dir / "domain_mapping.csv",
+        dataset,
+        domains,
+        domain_labels,
+    )
     formats = tuple(
         value.strip().lower() for value in args.formats.split(",") if value.strip()
     )
