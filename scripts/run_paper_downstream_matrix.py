@@ -349,7 +349,10 @@ def main() -> int:
         missing = [str(path) for path in required if not path.exists()]
         if missing:
             raise FileNotFoundError(f"Missing downstream inputs: {missing}")
-        if args.dataset.startswith("multidomain"):
+        if (
+            args.dataset.startswith("multidomain")
+            and args.stage in {"p2", "all"}
+        ):
             physics_jobs = [
                 str(job["id"])
                 for job in p2_jobs
@@ -361,8 +364,8 @@ def main() -> int:
                     "validated kinematic ratios have not yet been registered for "
                     "every family. Refusing physics-guided P2 jobs "
                     f"{physics_jobs} rather than silently using an unrelated "
-                    "bearing prior. Run the P1 continual-learning matrix first, "
-                    "or register verified per-bearing kinematics before P2/P3."
+                    "bearing prior. Select a non-physics P2 job or register "
+                    "verified per-bearing kinematics before P2."
                 )
 
     command_rows: list[str] = []

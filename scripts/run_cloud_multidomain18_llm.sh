@@ -40,6 +40,7 @@ python scripts/run_paper_downstream_matrix.py \
   --output-root "$OUTPUT_ROOT" \
   --seeds "$SEEDS" \
   --stage p3 \
+  --p2-jobs semantic_local_adaptive \
   --p3-p2-job semantic_local_adaptive \
   --p3-jobs continuous_identity_only,continuous_no_condition,continuous_full,continuous_full_lora \
   --device cuda \
@@ -61,6 +62,7 @@ if [[ "$RUN_EXPLANATIONS" == "1" ]]; then
     --output-root "$OUTPUT_ROOT" \
     --seeds "$SEEDS" \
     --stage p3 \
+    --p2-jobs semantic_local_adaptive \
     --p3-p2-job semantic_local_adaptive \
     --p3-jobs explanation_unlocked,explanation_locked \
     --device cuda \
