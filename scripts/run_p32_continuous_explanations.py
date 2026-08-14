@@ -254,7 +254,6 @@ def main() -> int:
     source_rows = _load_rows(p2_dir / "evaluation_predictions.jsonl")
     rows = select_evaluation_rows(source_rows, args.max_samples)
     arrays = _load_npz(p2_dir / "p2_outputs.npz")
-    context = build_continuous_context(arrays)
     array_lookup = {
         (int(domain), int(sample_id)): index
         for index, (domain, sample_id) in enumerate(
@@ -269,6 +268,8 @@ def main() -> int:
     )
     class_names = [str(value) for value in checkpoint["class_names"]]
     adapter_config = dict(checkpoint["adapter_config"])
+    context_mode = str(adapter_config.get("context_mode", "no_condition"))
+    context = build_continuous_context(arrays, mode=context_mode)
 
     try:
         import transformers
@@ -296,6 +297,18 @@ def main() -> int:
         dtype_key = "dtype" if transformers_major >= 5 else "torch_dtype"
         model_kwargs[dtype_key] = dtype_map[args.dtype]
     model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
+    llm_tuning = str(adapter_config.get("llm_tuning", "frozen"))
+    lora_dir = p31_dir / "llm_lora_adapter"
+    if llm_tuning == "lora":
+        if not lora_dir.is_dir():
+            raise FileNotFoundError(f"Missing P3.1 LoRA adapter: {lora_dir}")
+        try:
+            from peft import PeftModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "Loading the P3.1 LoRA adapter requires PEFT."
+            ) from exc
+        model = PeftModel.from_pretrained(model, lora_dir)
     device = torch.device(args.device)
     model.to(device).eval().requires_grad_(False)
     adapter = LowRankContinuousPromptAdapter(
@@ -438,7 +451,10 @@ def main() -> int:
         "p31_dir": str(p31_dir.resolve()),
         "p2_stage": p2_report["stage"],
         "p31_stage": p31_report["stage"],
-        "qwen_frozen": True,
+        "qwen_frozen": llm_tuning == "frozen",
+        "llm_frozen": llm_tuning == "frozen",
+        "llm_tuning": llm_tuning,
+        "context_mode": context_mode,
         "continuous_vector_prompt_enabled": True,
         "text_prompt_exposes_upstream_top1_or_probabilities": False,
         "text_prompt_exposes_ground_truth": False,

@@ -76,6 +76,40 @@ class P31ContinuousPromptTests(unittest.TestCase):
             rtol=1e-5,
         )
 
+    def test_full_context_adds_only_observable_condition_features(self) -> None:
+        arrays = {
+            "fuzzy_symptom_embeddings": np.ones((2, 6), dtype=np.float32),
+            "fused_probabilities": np.asarray(
+                [[0.6, 0.2, 0.1, 0.1], [0.1, 0.2, 0.6, 0.1]],
+                dtype=np.float32,
+            ),
+            "global_probabilities": np.asarray(
+                [[0.7, 0.1, 0.1, 0.1], [0.1, 0.1, 0.7, 0.1]],
+                dtype=np.float32,
+            ),
+            "local_probabilities": np.asarray(
+                [[0.6, 0.2, 0.1, 0.1], [0.1, 0.2, 0.6, 0.1]],
+                dtype=np.float32,
+            ),
+            "condition_features": np.asarray(
+                [[0.5, 0.64, 0.1, 0.2, 1, 1, 1, 1]] * 2,
+                dtype=np.float32,
+            ),
+        }
+        no_condition = build_continuous_context(
+            arrays,
+            mode="no_condition",
+        )
+        full = build_continuous_context(arrays, mode="full")
+        identity = build_continuous_context(
+            arrays,
+            mode="fault_identity_only",
+        )
+        self.assertEqual(no_condition.shape, (2, 13))
+        self.assertEqual(full.shape, (2, 21))
+        self.assertEqual(identity.shape, (2, 7))
+        np.testing.assert_allclose(full[:, -8:], arrays["condition_features"])
+
     def test_adapter_emits_prompt_tokens_and_gradients(self) -> None:
         adapter = LowRankContinuousPromptAdapter(
             input_dim=15,
@@ -135,6 +169,10 @@ class P31ContinuousPromptTests(unittest.TestCase):
         self.assertEqual(metrics["upstream_only_correct"], 1)
         self.assertEqual(metrics["both_wrong"], 1)
         self.assertAlmostEqual(metrics["qwen_minus_upstream_accuracy"], 0.0)
+        self.assertAlmostEqual(metrics["correction_rate"], 0.25)
+        self.assertAlmostEqual(metrics["corruption_rate"], 0.25)
+        self.assertAlmostEqual(metrics["net_correction_rate"], 0.0)
+        self.assertAlmostEqual(metrics["mcnemar_exact_p_value"], 1.0)
 
 
 if __name__ == "__main__":

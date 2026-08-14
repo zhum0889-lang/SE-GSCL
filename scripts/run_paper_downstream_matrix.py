@@ -33,6 +33,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", help="Comma-separated override.")
     parser.add_argument("--p2-jobs", help="Comma-separated P2 job IDs.")
     parser.add_argument("--p3-jobs", help="Comma-separated P3 job IDs.")
+    parser.add_argument(
+        "--p3-p2-job",
+        help="P2 job supplying semantic packets to P3 (dataset default otherwise).",
+    )
     parser.add_argument("--stage", choices=("p2", "p3", "all"), default="all")
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
@@ -176,7 +180,7 @@ def build_p3_command(
             str(p2_dir),
             *common,
             "--max-samples",
-            "0",
+            str(job.get("max_samples", 0)),
             "--batch-size",
             "4",
         ]
@@ -188,17 +192,33 @@ def build_p3_command(
             str(p2_dir),
             *common,
             "--epochs",
-            str(prompt_epochs),
+            str(job.get("epochs", prompt_epochs)),
             "--batch-size",
             "1",
             "--gradient-accumulation",
             "8",
             "--auxiliary-weight",
             str(job.get("auxiliary_weight", 0.5)),
+            "--learning-rate",
+            str(job.get("learning_rate", 2e-4)),
             "--num-prompt-tokens",
-            "4",
+            str(job.get("num_prompt_tokens", 4)),
             "--adapter-rank",
-            "64",
+            str(job.get("adapter_rank", 64)),
+            "--patience",
+            str(job.get("patience", 5)),
+            "--context-mode",
+            str(job.get("context_mode", "full")),
+            "--llm-tuning",
+            str(job.get("llm_tuning", "frozen")),
+            "--lora-rank",
+            str(job.get("lora_rank", 8)),
+            "--lora-alpha",
+            str(job.get("lora_alpha", 16)),
+            "--lora-dropout",
+            str(job.get("lora_dropout", 0.05)),
+            "--lora-target-modules",
+            str(job.get("lora_target_modules", "q_proj,v_proj")),
             "--seed",
             str(seed),
             "--max-train-samples",
@@ -218,7 +238,7 @@ def build_p3_command(
             str(p31_dir),
             *common,
             "--max-samples",
-            "0",
+            str(job.get("max_samples", 0)),
             "--batch-size",
             "4",
         ]
@@ -229,6 +249,16 @@ def build_p3_command(
         )
     else:
         raise ValueError(f"Unsupported P3 job type: {job_type}")
+    if job_type == "continuous_prompt" and job.get(
+        "initialize_from_p31",
+        False,
+    ):
+        command.extend(
+            [
+                "--init-prompt-checkpoint",
+                str(p31_dir / "continuous_prompt_adapter.pt"),
+            ]
+        )
     _add_flag(command, local_files_only, "--local-files-only")
     return command
 
@@ -340,7 +370,13 @@ def main() -> int:
         p1_dir = p1_root / f"seed_{seed}" / "se_gscl_full"
         if args.execute and not (p1_dir / "p1_report.json").is_file():
             raise FileNotFoundError(f"Missing full P1 checkpoint: {p1_dir}")
-        full_p2_dir = output_root / "p2" / args.dataset / f"seed_{seed}" / "se_gscl_full"
+        p3_p2_job = str(
+            args.p3_p2_job
+            or dataset_config.get("p3_p2_job", "se_gscl_full")
+        )
+        full_p2_dir = (
+            output_root / "p2" / args.dataset / f"seed_{seed}" / p3_p2_job
+        )
         if args.stage in {"p2", "all"}:
             for job in p2_jobs:
                 output_dir = output_root / "p2" / args.dataset / f"seed_{seed}" / str(job["id"])
@@ -368,14 +404,15 @@ def main() -> int:
         if args.stage in {"p3", "all"}:
             if args.execute and not (full_p2_dir / "p2_report.json").is_file():
                 raise FileNotFoundError(f"Missing full P2 output: {full_p2_dir}")
-            full_p31_dir = (
-                output_root
-                / "p3"
-                / args.dataset
-                / f"seed_{seed}"
-                / "continuous_full"
-            )
             for job in p3_jobs:
+                p31_source_job = str(job.get("p31_job", "continuous_full"))
+                full_p31_dir = (
+                    output_root
+                    / "p3"
+                    / args.dataset
+                    / f"seed_{seed}"
+                    / p31_source_job
+                )
                 output_dir = output_root / "p3" / args.dataset / f"seed_{seed}" / str(job["id"])
                 command = build_p3_command(
                     python_bin=sys.executable,

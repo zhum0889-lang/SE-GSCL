@@ -106,6 +106,35 @@ class PaperMatrixTests(unittest.TestCase):
         )
         self.assertEqual(command[command.index("--seed") + 1], "62")
         self.assertIn("--local-files-only", command)
+        self.assertEqual(
+            command[command.index("--context-mode") + 1],
+            "full",
+        )
+
+        lora = next(
+            row
+            for row in self.matrix["p3_jobs"]
+            if row["id"] == "continuous_full_lora"
+        )
+        command = build_p3_command(
+            python_bin="python",
+            job=lora,
+            p2_dir=Path("p2"),
+            p31_dir=Path("p31"),
+            model=Path("llm"),
+            output_dir=Path("out"),
+            device="cuda",
+            dtype="bfloat16",
+            prompt_epochs=10,
+            seed=42,
+            local_files_only=True,
+        )
+        self.assertEqual(command[command.index("--llm-tuning") + 1], "lora")
+        self.assertEqual(command[command.index("--lora-rank") + 1], "8")
+        self.assertEqual(
+            command[command.index("--init-prompt-checkpoint") + 1],
+            str(Path("p31") / "continuous_prompt_adapter.pt"),
+        )
 
         unlocked = next(
             row

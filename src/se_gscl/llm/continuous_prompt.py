@@ -12,6 +12,8 @@ from torch import nn
 
 def build_continuous_context(
     arrays: Mapping[str, np.ndarray],
+    *,
+    mode: str = "no_condition",
 ) -> np.ndarray:
     """Combine P2 semantic evidence and reliability into one adapter input.
 
@@ -20,6 +22,16 @@ def build_continuous_context(
     the continuous-prompt adapter in P3.1.
     """
 
+    supported_modes = {
+        "full",
+        "no_condition",
+        "fault_identity_only",
+    }
+    if mode not in supported_modes:
+        raise ValueError(
+            f"Unsupported continuous context mode {mode!r}; "
+            f"choose from {sorted(supported_modes)}."
+        )
     fuzzy = np.asarray(
         arrays["fuzzy_symptom_embeddings"],
         dtype=np.float32,
@@ -55,16 +67,35 @@ def build_continuous_context(
         global_probabilities.argmax(axis=1)
         == local_probabilities.argmax(axis=1)
     ).astype(np.float32)
-    return np.concatenate(
+    reliability = np.concatenate(
         [
-            fuzzy,
-            fused,
             entropy[:, None].astype(np.float32),
             margin[:, None].astype(np.float32),
             agreement[:, None],
         ],
         axis=1,
-    ).astype(np.float32)
+    )
+    if mode == "fault_identity_only":
+        return np.concatenate(
+            [global_probabilities, reliability],
+            axis=1,
+        ).astype(np.float32)
+
+    blocks = [fuzzy, fused, reliability]
+    if mode == "full":
+        if "condition_features" not in arrays:
+            raise ValueError(
+                "Full continuous prompting requires label-free observable "
+                "condition_features exported by the current P2 pipeline."
+            )
+        condition = np.asarray(
+            arrays["condition_features"],
+            dtype=np.float32,
+        )
+        if len(condition) != len(fuzzy):
+            raise ValueError("Condition features must share sample count.")
+        blocks.append(condition)
+    return np.concatenate(blocks, axis=1).astype(np.float32)
 
 
 class LowRankContinuousPromptAdapter(nn.Module):

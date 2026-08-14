@@ -68,6 +68,9 @@ class WindowDataset(Dataset[dict[str, torch.Tensor]]):
         self.sample_ids = torch.from_numpy(
             np.asarray(dataset["sample_id"], dtype=np.int64)
         )
+        self.condition_features = torch.from_numpy(
+            _observable_condition_features(dataset)
+        )
         self.symptom_targets = (
             None
             if symptom_targets is None
@@ -101,11 +104,64 @@ class WindowDataset(Dataset[dict[str, torch.Tensor]]):
             "label": self.labels[index],
             "domain": self.domains[index],
             "sample_id": self.sample_ids[index],
+            "condition_features": self.condition_features[index],
         }
         if self.symptom_targets is not None:
             row["symptom_targets"] = self.symptom_targets[index]
             row["symptom_target_weights"] = self.symptom_target_weights[index]
         return row
+
+
+CONDITION_FEATURE_NAMES = (
+    "speed_rpm_scaled",
+    "sampling_rate_scaled",
+    "torque_nm_scaled",
+    "radial_force_n_scaled",
+    "speed_observed",
+    "sampling_rate_observed",
+    "torque_observed",
+    "radial_force_observed",
+)
+
+
+def _scaled_observable(
+    dataset: dict[str, object],
+    key: str,
+    scale: float,
+    length: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    values = np.asarray(
+        dataset.get(key, np.full(length, np.nan)),
+        dtype=np.float32,
+    )
+    if len(values) != length:
+        raise ValueError(f"Condition field {key!r} must match dataset length.")
+    observed = np.isfinite(values)
+    scaled = np.zeros(length, dtype=np.float32)
+    scaled[observed] = np.clip(values[observed] / scale, -5.0, 5.0)
+    return scaled, observed.astype(np.float32)
+
+
+def _observable_condition_features(
+    dataset: dict[str, object],
+) -> np.ndarray:
+    """Encode only deployment-observable context with fixed physical scales.
+
+    Fixed scales avoid fitting normalization statistics on unseen conditions.
+    Missingness indicators let the prompt adapter distinguish a true zero from
+    unavailable metadata without using domain IDs or fault labels.
+    """
+
+    length = len(np.asarray(dataset["y"]))
+    values_and_masks = [
+        _scaled_observable(dataset, "speed_rpm", 2000.0, length),
+        _scaled_observable(dataset, "sampling_rate", 100000.0, length),
+        _scaled_observable(dataset, "torque_nm", 100.0, length),
+        _scaled_observable(dataset, "radial_force_n", 5000.0, length),
+    ]
+    values = [row[0] for row in values_and_masks]
+    masks = [row[1] for row in values_and_masks]
+    return np.stack([*values, *masks], axis=1).astype(np.float32)
 
 
 def parse_args() -> argparse.Namespace:
@@ -372,6 +428,7 @@ def _collect_continuous_prompt_split(
         "fusion_local_weights": [],
         "symptom_joint_probabilities": [],
         "fuzzy_symptom_embeddings": [],
+        "condition_features": [],
     }
     matcher.eval()
     for batch in DataLoader(
@@ -416,6 +473,9 @@ def _collect_continuous_prompt_split(
         )
         rows["fuzzy_symptom_embeddings"].append(
             local_output.fuzzy_symptom_embedding.cpu().numpy()
+        )
+        rows["condition_features"].append(
+            batch["condition_features"].numpy()
         )
     return {
         key: np.concatenate(value)
@@ -836,6 +896,7 @@ def main() -> int:
         "symptom_joint_probabilities": [],
         "symptom_probabilities": [],
         "fuzzy_symptom_embeddings": [],
+        "condition_features": [],
     }
     if args.physics_guided:
         arrays["physical_symptom_targets"] = []
@@ -849,6 +910,7 @@ def main() -> int:
             joint_rows: list[np.ndarray] = []
             symptom_probability_rows: list[np.ndarray] = []
             fuzzy_rows: list[np.ndarray] = []
+            condition_feature_rows: list[np.ndarray] = []
             sample_rows: list[np.ndarray] = []
             target_rows: list[np.ndarray] = []
             target_weight_rows: list[np.ndarray] = []
@@ -877,6 +939,9 @@ def main() -> int:
                 )
                 fuzzy_rows.append(
                     local_output.fuzzy_symptom_embedding.cpu().numpy()
+                )
+                condition_feature_rows.append(
+                    batch["condition_features"].numpy()
                 )
                 if args.physics_guided:
                     target_rows.append(batch["symptom_targets"].numpy())
@@ -994,6 +1059,9 @@ def main() -> int:
             arrays["symptom_joint_probabilities"].append(joint_probabilities)
             arrays["symptom_probabilities"].append(symptom_probabilities)
             arrays["fuzzy_symptom_embeddings"].append(fuzzy_embeddings)
+            arrays["condition_features"].append(
+                np.concatenate(condition_feature_rows)
+            )
             if args.physics_guided:
                 arrays["physical_symptom_targets"].append(physical_targets)
                 arrays["physical_target_weights"].append(physical_weights)
@@ -1138,6 +1206,12 @@ def main() -> int:
             "+ Top symptoms; ready for later continuous-prompt assembly."
         ),
         "continuous_prompt_exports": prompt_exports,
+        "condition_context": {
+            "feature_names": CONDITION_FEATURE_NAMES,
+            "uses_domain_id": False,
+            "uses_fault_label": False,
+            "scaling": "fixed physical scales; no test-condition fitting",
+        },
         "note": (
             "The local semantic branch is trained only on the initial domain; "
             "the P1 specialist and global semantic branch remain frozen. "

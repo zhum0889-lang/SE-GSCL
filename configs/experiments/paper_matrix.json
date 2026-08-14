@@ -29,6 +29,7 @@
     },
     "multidomain8_disjoint18": {
       "role": "primary_multifactor",
+      "p3_p2_job": "semantic_local_adaptive",
       "domain_order": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
       "ontology": "configs/semantics/bearing_faults_4.json",
       "global_text_cache": "results/semantic_cache/qwen25_7b_bearing4_v1",
@@ -150,6 +151,14 @@
       "local_weight": 0.3
     },
     {
+      "id": "semantic_local_adaptive",
+      "group": "multibearing_p2",
+      "adapter_epochs": 30,
+      "local_weight": 0.3,
+      "adaptive_fusion": true,
+      "note": "Class-supervised symptom semantics without unverified bearing kinematics"
+    },
+    {
       "id": "physics_fixed",
       "group": "p2_ablation",
       "adapter_epochs": 15,
@@ -181,28 +190,75 @@
       "type": "structured_text"
     },
     {
-      "id": "continuous_no_aux",
+      "id": "continuous_identity_only",
       "group": "p3_ablation",
       "type": "continuous_prompt",
-      "auxiliary_weight": 0.0
+      "auxiliary_weight": 0.5,
+      "context_mode": "fault_identity_only",
+      "llm_tuning": "frozen",
+      "epochs": 30,
+      "patience": 5,
+      "num_prompt_tokens": 8,
+      "adapter_rank": 128
+    },
+    {
+      "id": "continuous_no_condition",
+      "group": "p3_ablation",
+      "type": "continuous_prompt",
+      "auxiliary_weight": 0.5,
+      "context_mode": "no_condition",
+      "llm_tuning": "frozen",
+      "epochs": 30,
+      "patience": 5,
+      "num_prompt_tokens": 8,
+      "adapter_rank": 128
     },
     {
       "id": "continuous_full",
       "group": "proposed",
       "type": "continuous_prompt",
-      "auxiliary_weight": 0.5
+      "auxiliary_weight": 0.5,
+      "context_mode": "full",
+      "llm_tuning": "frozen",
+      "epochs": 30,
+      "patience": 5,
+      "num_prompt_tokens": 8,
+      "adapter_rank": 128
+    },
+    {
+      "id": "continuous_full_lora",
+      "group": "proposed_llm_adaptation",
+      "type": "continuous_prompt",
+      "auxiliary_weight": 0.5,
+      "context_mode": "full",
+      "llm_tuning": "lora",
+      "epochs": 30,
+      "patience": 5,
+      "learning_rate": 0.0001,
+      "num_prompt_tokens": 8,
+      "adapter_rank": 128,
+      "p31_job": "continuous_full",
+      "initialize_from_p31": true,
+      "lora_rank": 8,
+      "lora_alpha": 16,
+      "lora_dropout": 0.05,
+      "lora_target_modules": "q_proj,v_proj"
     },
     {
       "id": "explanation_unlocked",
       "group": "p3_ablation",
       "type": "continuous_explanation",
-      "unlock_diagnosis": true
+      "unlock_diagnosis": true,
+      "p31_job": "continuous_full_lora",
+      "max_samples": 360
     },
     {
       "id": "explanation_locked",
       "group": "proposed",
       "type": "continuous_explanation",
-      "unlock_diagnosis": false
+      "unlock_diagnosis": false,
+      "p31_job": "continuous_full_lora",
+      "max_samples": 360
     }
   ]
 }

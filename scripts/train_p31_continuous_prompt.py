@@ -1,4 +1,4 @@
-"""Train a leakage-free continuous semantic prompt for frozen Qwen."""
+"""Train leakage-free continuous semantic prompts for a pretrained LLM."""
 
 from __future__ import annotations
 
@@ -52,6 +52,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument(
+        "--init-prompt-checkpoint",
+        help=(
+            "Optional frozen-LLM continuous-prompt checkpoint used to "
+            "initialize progressive LoRA adaptation."
+        ),
+    )
+    parser.add_argument(
+        "--context-mode",
+        choices=("full", "no_condition", "fault_identity_only"),
+        default="full",
+    )
+    parser.add_argument(
+        "--llm-tuning",
+        choices=("frozen", "lora"),
+        default="frozen",
+    )
+    parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument(
+        "--lora-target-modules",
+        default="q_proj,v_proj",
+        help="Comma-separated attention projections used only in LoRA mode.",
+    )
     return parser.parse_args()
 
 
@@ -311,10 +336,16 @@ def _classification_metrics(
     }
     for domain in sorted(int(value) for value in np.unique(domains)):
         mask = domains == domain
+        domain_recalls = [
+            float(np.mean(predicted[mask & (labels == class_id)] == class_id))
+            for class_id in range(num_classes)
+            if np.any(mask & (labels == class_id))
+        ]
         metrics["domain_metrics"][str(domain)] = {
             "samples": int(mask.sum()),
             "valid_label_rate": float(np.mean(predicted[mask] >= 0)),
             "accuracy": float(np.mean(predicted[mask] == labels[mask])),
+            "balanced_accuracy": float(np.mean(domain_recalls)),
         }
     return metrics
 
@@ -326,23 +357,94 @@ def _paired_comparison(
 ) -> dict[str, Any]:
     generated_correct = generated == labels
     upstream_correct = upstream == labels
+    llm_only = int(np.sum(generated_correct & ~upstream_correct))
+    upstream_only = int(np.sum(~generated_correct & upstream_correct))
+    discordant = llm_only + upstream_only
+    try:
+        from scipy.stats import binomtest
+
+        mcnemar_p = float(
+            binomtest(
+                min(llm_only, upstream_only),
+                n=discordant,
+                p=0.5,
+                alternative="two-sided",
+            ).pvalue
+        ) if discordant else 1.0
+    except ImportError:
+        mcnemar_p = None
     return {
         "samples": int(len(labels)),
         "prediction_agreement_rate": float(
             np.mean(generated == upstream)
         ),
         "both_correct": int(np.sum(generated_correct & upstream_correct)),
-        "qwen_only_correct": int(
-            np.sum(generated_correct & ~upstream_correct)
-        ),
-        "upstream_only_correct": int(
-            np.sum(~generated_correct & upstream_correct)
-        ),
+        "llm_only_correct": llm_only,
+        "qwen_only_correct": llm_only,
+        "upstream_only_correct": upstream_only,
         "both_wrong": int(np.sum(~generated_correct & ~upstream_correct)),
+        "correction_rate": float(llm_only / max(1, len(labels))),
+        "corruption_rate": float(upstream_only / max(1, len(labels))),
+        "net_correction_rate": float(
+            (llm_only - upstream_only) / max(1, len(labels))
+        ),
+        "mcnemar_exact_p_value": mcnemar_p,
         "qwen_minus_upstream_accuracy": float(
             np.mean(generated_correct) - np.mean(upstream_correct)
         ),
     }
+
+
+def _probability_baseline(
+    probabilities: np.ndarray,
+    labels: np.ndarray,
+    domains: np.ndarray,
+    class_names: list[str],
+) -> dict[str, Any]:
+    probabilities = np.asarray(probabilities, dtype=np.float32)
+    predictions = probabilities.argmax(axis=1)
+    metrics = _classification_metrics(
+        predictions,
+        labels,
+        domains,
+        class_names,
+    )
+    order = np.argsort(-probabilities, axis=1)
+    metrics["candidate_coverage"] = {
+        f"top_{k}": float(
+            np.mean(np.any(order[:, :k] == labels[:, None], axis=1))
+        )
+        for k in range(1, probabilities.shape[1] + 1)
+    }
+    return metrics
+
+
+def _trainable_state(module) -> dict[str, torch.Tensor]:
+    return {
+        name: parameter.detach().cpu().clone()
+        for name, parameter in module.named_parameters()
+        if parameter.requires_grad
+    }
+
+
+def _restore_trainable_state(
+    module,
+    state: dict[str, torch.Tensor],
+) -> None:
+    parameters = dict(module.named_parameters())
+    missing = sorted(set(state) - set(parameters))
+    if missing:
+        raise RuntimeError(f"Trainable checkpoint parameters disappeared: {missing}")
+    with torch.no_grad():
+        for name, value in state.items():
+            parameters[name].copy_(value.to(parameters[name].device))
+
+
+def _load_checkpoint(path: Path) -> dict[str, Any]:
+    try:
+        return torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location="cpu")
 
 
 @torch.inference_mode()
@@ -479,9 +581,18 @@ def main() -> int:
         args.max_test_samples,
         args.seed + 2,
     )
-    train_context = build_continuous_context(train_arrays)
-    validation_context = build_continuous_context(validation_arrays)
-    test_context = build_continuous_context(test_arrays)
+    train_context = build_continuous_context(
+        train_arrays,
+        mode=args.context_mode,
+    )
+    validation_context = build_continuous_context(
+        validation_arrays,
+        mode=args.context_mode,
+    )
+    test_context = build_continuous_context(
+        test_arrays,
+        mode=args.context_mode,
+    )
     context_mean = np.zeros(
         (1, train_context.shape[1]),
         dtype=np.float32,
@@ -518,10 +629,35 @@ def main() -> int:
         model_kwargs[dtype_key] = dtype_map[args.dtype]
     model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
     device = torch.device(args.device)
-    # Qwen is a fixed semantic reasoner in P3.1. Gradients still pass through
-    # its forward computation to the prompt embeddings, but no LLM parameter
-    # is optimized or stored in the P3 checkpoint.
     model.to(device).requires_grad_(False)
+    lora_targets = [
+        value.strip()
+        for value in args.lora_target_modules.split(",")
+        if value.strip()
+    ]
+    if args.llm_tuning == "lora":
+        if not lora_targets:
+            raise ValueError("LoRA mode requires at least one target module.")
+        try:
+            from peft import LoraConfig, TaskType, get_peft_model
+        except ImportError as exc:
+            raise RuntimeError(
+                "LoRA mode requires PEFT. Install requirements.txt first."
+            ) from exc
+        model = get_peft_model(
+            model,
+            LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                lora_dropout=args.lora_dropout,
+                target_modules=lora_targets,
+                bias="none",
+            ),
+        )
+    # In frozen mode gradients traverse the LLM to reach continuous prompt
+    # tokens, while every pretrained parameter remains fixed. LoRA mode updates
+    # only low-rank attention adapters and never performs full-model training.
     model.config.use_cache = False
     if args.gradient_checkpointing:
         try:
@@ -548,15 +684,51 @@ def main() -> int:
         rank=args.adapter_rank,
         num_classes=len(class_names),
     ).to(device)
+    initialization_source = None
+    if args.init_prompt_checkpoint:
+        initialization_path = Path(args.init_prompt_checkpoint)
+        if not initialization_path.is_file():
+            raise FileNotFoundError(
+                f"Missing prompt initialization checkpoint: {initialization_path}"
+            )
+        initialization = _load_checkpoint(initialization_path)
+        initialization_config = dict(initialization["adapter_config"])
+        expected = {
+            "input_dim": train_context.shape[1],
+            "hidden_size": int(model.config.hidden_size),
+            "num_prompt_tokens": args.num_prompt_tokens,
+            "rank": args.adapter_rank,
+            "num_classes": len(class_names),
+            "context_mode": args.context_mode,
+        }
+        mismatches = {
+            key: (initialization_config.get(key), value)
+            for key, value in expected.items()
+            if initialization_config.get(key) != value
+        }
+        if mismatches:
+            raise ValueError(
+                "Prompt initialization is incompatible with the requested "
+                f"adapter: {mismatches}"
+            )
+        if list(initialization["class_names"]) != class_names:
+            raise ValueError("Prompt initialization class order does not match P2.")
+        adapter.load_state_dict(initialization["adapter_state_dict"], strict=True)
+        initialization_source = str(initialization_path.resolve())
     class_weights = _class_weights(
         train_arrays["labels"],
         len(class_names),
         device,
     )
-    # Restrict optimization to the low-rank prompt adapter. This makes the
-    # experiment test continuous semantic prompting rather than LLM fine-tuning.
+    model_trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    optimized_parameters = [
+        *adapter.parameters(),
+        *model_trainable_parameters,
+    ]
     optimizer = torch.optim.AdamW(
-        adapter.parameters(),
+        optimized_parameters,
         lr=args.learning_rate,
         weight_decay=args.weight_decay,
     )
@@ -584,10 +756,11 @@ def main() -> int:
     best_loss = float("inf")
     best_epoch = None
     best_state = None
+    best_llm_state = None
     stale = 0
     for epoch in range(args.epochs):
         adapter.train()
-        model.train()
+        model.train(args.llm_tuning == "lora")
         optimizer.zero_grad(set_to_none=True)
         total = 0.0
         total_lm = 0.0
@@ -631,7 +804,7 @@ def main() -> int:
                 (step + 1) % args.gradient_accumulation == 0
                 or step + 1 == len(train_loader)
             ):
-                torch.nn.utils.clip_grad_norm_(adapter.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(optimized_parameters, 1.0)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             total += float(loss.detach().cpu()) * len(labels)
@@ -675,6 +848,7 @@ def main() -> int:
             best_loss = validation_losses["total"]
             best_epoch = epoch
             best_state = copy.deepcopy(adapter.state_dict())
+            best_llm_state = _trainable_state(model)
             stale = 0
         else:
             stale += 1
@@ -683,6 +857,8 @@ def main() -> int:
     if best_state is None:
         raise RuntimeError("Continuous prompt training produced no checkpoint.")
     adapter.load_state_dict(best_state)
+    if best_llm_state:
+        _restore_trainable_state(model, best_llm_state)
     model.config.use_cache = True
     predictions, prompt_metrics = _generate_predictions(
         test_context.astype(np.float32),
@@ -719,24 +895,27 @@ def main() -> int:
         row["qwen_upstream_agreement"] = (
             row["predicted_class_id"] == upstream_id
         )
-    fused_metrics = {
-        "accuracy": float(
-            np.mean(fused_predictions == test_arrays["labels"])
+    semantic_baselines = {
+        "global_fault_identity": _probability_baseline(
+            test_arrays["global_probabilities"],
+            test_arrays["labels"].astype(np.int64),
+            test_arrays["domains"].astype(np.int64),
+            class_names,
         ),
-        "domain_accuracy": {
-            str(domain): float(
-                np.mean(
-                    fused_predictions[test_arrays["domains"] == domain]
-                    == test_arrays["labels"][
-                        test_arrays["domains"] == domain
-                    ]
-                )
-            )
-            for domain in sorted(
-                int(value) for value in np.unique(test_arrays["domains"])
-            )
-        },
+        "local_symptom": _probability_baseline(
+            test_arrays["local_probabilities"],
+            test_arrays["labels"].astype(np.int64),
+            test_arrays["domains"].astype(np.int64),
+            class_names,
+        ),
+        "hierarchical_fusion": _probability_baseline(
+            test_arrays["fused_probabilities"],
+            test_arrays["labels"].astype(np.int64),
+            test_arrays["domains"].astype(np.int64),
+            class_names,
+        ),
     }
+    fused_metrics = semantic_baselines["hierarchical_fusion"]
     paired_metrics = _paired_comparison(
         generated_predictions,
         fused_predictions,
@@ -753,6 +932,8 @@ def main() -> int:
             "num_prompt_tokens": adapter.num_prompt_tokens,
             "rank": adapter.rank,
             "num_classes": adapter.num_classes,
+            "context_mode": args.context_mode,
+            "llm_tuning": args.llm_tuning,
         },
         "context_mean": torch.from_numpy(context_mean),
         "context_std": torch.from_numpy(context_std),
@@ -760,6 +941,8 @@ def main() -> int:
         "instruction": _instruction(class_names),
     }
     torch.save(checkpoint, output_dir / "continuous_prompt_adapter.pt")
+    if args.llm_tuning == "lora":
+        model.save_pretrained(output_dir / "llm_lora_adapter")
     with (output_dir / "p31_predictions.jsonl").open(
         "w",
         encoding="utf-8",
@@ -774,7 +957,9 @@ def main() -> int:
         ),
         "model": str(args.model),
         "p2_dir": str(p2_dir.resolve()),
-        "qwen_frozen": True,
+        "qwen_frozen": args.llm_tuning == "frozen",
+        "llm_frozen": args.llm_tuning == "frozen",
+        "llm_tuning": args.llm_tuning,
         "continuous_vector_prompt_enabled": True,
         "input_contract": {
             "fuzzy_semantic_dim": int(
@@ -783,6 +968,8 @@ def main() -> int:
             "context_dim": int(train_context.shape[1]),
             "num_prompt_tokens": args.num_prompt_tokens,
             "adapter_rank": args.adapter_rank,
+            "context_mode": args.context_mode,
+            "condition_context_enabled": args.context_mode == "full",
             "normalization": (
                 "sample-wise L2 normalization for fuzzy semantics; "
                 "posterior and reliability values remain in [0,1]"
@@ -809,6 +996,7 @@ def main() -> int:
             "best_epoch": best_epoch,
             "best_validation_loss": best_loss,
             "seed": args.seed,
+            "initialization_source": initialization_source,
             "objective": (
                 "language_model_loss + auxiliary_weight * "
                 "class_balanced_semantic_classification_loss"
@@ -818,16 +1006,40 @@ def main() -> int:
                 float(value)
                 for value in class_weights.detach().cpu().tolist()
             ],
+            "trainable_parameters": {
+                "continuous_prompt_adapter": int(
+                    sum(parameter.numel() for parameter in adapter.parameters())
+                ),
+                "llm_adapter": int(
+                    sum(
+                        parameter.numel()
+                        for parameter in model.parameters()
+                        if parameter.requires_grad
+                    )
+                ),
+            },
+            "lora": (
+                {
+                    "rank": args.lora_rank,
+                    "alpha": args.lora_alpha,
+                    "dropout": args.lora_dropout,
+                    "target_modules": lora_targets,
+                }
+                if args.llm_tuning == "lora"
+                else None
+            ),
             "history": history,
         },
         "continuous_prompt_metrics": prompt_metrics,
         "training_only_auxiliary_probe_metrics": auxiliary_metrics,
+        "upstream_semantic_baselines": semantic_baselines,
         "upstream_fused_baseline": fused_metrics,
         "qwen_upstream_paired_comparison": paired_metrics,
+        "llm_upstream_paired_comparison": paired_metrics,
         "note": (
             "This stage isolates direct-vector label generation. "
             "The auxiliary classifier regularizes prompt tokens during "
-            "training and is not used for the reported Qwen diagnosis. "
+            "training and is not used for the reported LLM diagnosis. "
             "Auditable explanations remain handled by the validated P3.0.2 "
             "semantic controller."
         ),
