@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.summarize_p3_llm_experiment import (
     _aggregate,
     _by_seed_rows,
     _markdown,
+    _plot,
 )
 
 
@@ -14,6 +17,11 @@ def _classification(accuracy: float) -> dict:
         "samples": 20,
         "accuracy": accuracy,
         "balanced_accuracy": accuracy,
+        "per_class_recall": {
+            "Normal": accuracy,
+            "Fault": accuracy,
+        },
+        "confusion_matrix": [[9, 1], [1, 9]],
         "candidate_coverage": {
             "top_1": accuracy,
             "top_2": min(1.0, accuracy + 0.1),
@@ -29,7 +37,8 @@ def _classification(accuracy: float) -> dict:
 
 
 class P3LlmSummaryTests(unittest.TestCase):
-    def test_summary_preserves_small_model_and_paired_llm_metrics(self) -> None:
+    @staticmethod
+    def _reports() -> list[tuple[str, int, dict]]:
         reports = []
         for seed, llm_accuracy in ((42, 0.8), (52, 0.9), (62, 1.0)):
             report = {
@@ -59,6 +68,10 @@ class P3LlmSummaryTests(unittest.TestCase):
                 },
             }
             reports.append(("continuous_full_lora", seed, report))
+        return reports
+
+    def test_summary_preserves_small_model_and_paired_llm_metrics(self) -> None:
+        reports = self._reports()
 
         rows, domain_rows = _by_seed_rows(reports)
         summary = _aggregate(rows)
@@ -73,6 +86,32 @@ class P3LlmSummaryTests(unittest.TestCase):
         markdown = _markdown(summary)
         self.assertIn("continuous_full_lora", markdown)
         self.assertIn("0.9000", markdown)
+
+    def test_plot_writes_classification_only_figures(self) -> None:
+        reports = self._reports()
+        rows, domain_rows = _by_seed_rows(reports)
+        summary = _aggregate(rows)
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = _plot(
+                summary,
+                rows,
+                domain_rows,
+                reports,
+                Path(directory),
+                ["png"],
+            )
+            self.assertEqual(
+                set(manifest),
+                {
+                    "overall_classification",
+                    "domain_accuracy",
+                    "class_recall_confusion",
+                    "seed_stability",
+                },
+            )
+            self.assertTrue(
+                all(Path(paths[0]).is_file() for paths in manifest.values())
+            )
 
 
 if __name__ == "__main__":

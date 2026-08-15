@@ -202,14 +202,51 @@ def _markdown(summary: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _plot(summary: list[dict[str, Any]], output_dir: Path, formats: list[str]) -> None:
+def _save_figure(
+    figure: Any,
+    output_dir: Path,
+    stem: str,
+    formats: list[str],
+) -> list[str]:
+    paths = []
+    for extension in formats:
+        path = output_dir / f"{stem}.{extension}"
+        figure.savefig(path, dpi=300, bbox_inches="tight")
+        paths.append(str(path))
+    return paths
+
+
+def _preferred_job(reports: list[tuple[str, int, dict[str, Any]]]) -> str:
+    available = {job for job, _, _ in reports}
+    for job in ("continuous_full_lora", "continuous_full"):
+        if job in available:
+            return job
+    return reports[-1][0]
+
+
+def _mean_std(values: list[float]) -> tuple[float, float]:
+    return fmean(values), pstdev(values)
+
+
+def _plot(
+    summary: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    domain_rows: list[dict[str, Any]],
+    reports: list[tuple[str, int, dict[str, Any]]],
+    output_dir: Path,
+    formats: list[str],
+) -> dict[str, list[str]]:
     try:
+        import matplotlib
+
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import numpy as np
     except ImportError as exc:
         raise RuntimeError(
             "Visualization dependencies are missing. Install requirements.txt."
         ) from exc
+    manifest: dict[str, list[str]] = {}
     labels = [row["job"].replace("continuous_", "") for row in summary]
     x = np.arange(len(labels))
     width = 0.25
@@ -265,9 +302,252 @@ def _plot(summary: list[dict[str, Any]], output_dir: Path, formats: list[str]) -
     axes[1].grid(axis="y", alpha=0.25)
     fig.suptitle("18-domain continuous-semantic LLM evaluation", fontweight="bold")
     fig.tight_layout()
-    for extension in formats:
-        fig.savefig(output_dir / f"p3_llm_accuracy_and_correction.{extension}", dpi=300)
+    manifest["overall_classification"] = _save_figure(
+        fig,
+        output_dir,
+        "p3_llm_accuracy_and_correction",
+        formats,
+    )
     plt.close(fig)
+
+    selected_job = _preferred_job(reports)
+    selected_domains = [
+        row for row in domain_rows if row["job"] == selected_job
+    ]
+    domains = sorted({int(row["domain"]) for row in selected_domains})
+    if domains:
+        fig, axis = plt.subplots(figsize=(12.2, 4.8))
+        methods = (
+            ("global_identity_accuracy", "Small-model fault identity", "#7A8291", "o"),
+            ("fused_accuracy", "Hierarchical semantic fusion", "#2A9D8F", "s"),
+            ("llm_accuracy", "Continuous-prompt LLM", "#D55E00", "D"),
+        )
+        x = np.arange(len(domains))
+        for key, label, color, marker in methods:
+            means = []
+            stds = []
+            for domain in domains:
+                values = [
+                    100.0 * float(row[key])
+                    for row in selected_domains
+                    if int(row["domain"]) == domain
+                ]
+                mean, std = _mean_std(values)
+                means.append(mean)
+                stds.append(std)
+            axis.plot(
+                x,
+                means,
+                color=color,
+                marker=marker,
+                linewidth=2.0,
+                markersize=5.5,
+                label=label,
+            )
+            axis.fill_between(
+                x,
+                np.asarray(means) - np.asarray(stds),
+                np.asarray(means) + np.asarray(stds),
+                color=color,
+                alpha=0.12,
+            )
+        axis.set_xticks(x, [f"D{index + 1}" for index in range(len(domains))])
+        axis.set_xlabel("Operating-condition domain")
+        axis.set_ylabel("Accuracy (%)")
+        axis.set_title(
+            f"Domain-wise classification across three seeds ({selected_job})",
+            fontweight="bold",
+        )
+        axis.set_ylim(0.0, 102.0)
+        axis.grid(axis="y", alpha=0.25)
+        axis.legend(frameon=False, ncol=3, loc="lower center")
+        axis.spines[["top", "right"]].set_visible(False)
+        fig.tight_layout()
+        manifest["domain_accuracy"] = _save_figure(
+            fig,
+            output_dir,
+            "p3_llm_domain_accuracy",
+            formats,
+        )
+        plt.close(fig)
+
+    selected_reports = [
+        report for job, _, report in reports if job == selected_job
+    ]
+    if selected_reports:
+        llm_metrics = [
+            report["continuous_prompt_metrics"] for report in selected_reports
+        ]
+        class_names = list(llm_metrics[0].get("per_class_recall", {}))
+        confusion_rows = [
+            np.asarray(metrics.get("confusion_matrix", []), dtype=float)
+            for metrics in llm_metrics
+        ]
+        has_confusion = (
+            class_names
+            and confusion_rows
+            and all(matrix.shape == confusion_rows[0].shape for matrix in confusion_rows)
+            and confusion_rows[0].shape == (len(class_names), len(class_names))
+        )
+        if class_names:
+            fig, axes = plt.subplots(1, 2, figsize=(13.2, 4.8))
+            x = np.arange(len(class_names))
+            width = 0.24
+            branches = (
+                (
+                    "global_fault_identity",
+                    "Small-model identity",
+                    "#7A8291",
+                ),
+                (
+                    "hierarchical_fusion",
+                    "Hierarchical fusion",
+                    "#2A9D8F",
+                ),
+                (None, "Continuous-prompt LLM", "#D55E00"),
+            )
+            for offset, (branch, label, color) in enumerate(branches):
+                means = []
+                stds = []
+                for class_name in class_names:
+                    if branch is None:
+                        values = [
+                            100.0 * float(metrics["per_class_recall"][class_name])
+                            for metrics in llm_metrics
+                        ]
+                    else:
+                        values = [
+                            100.0
+                            * float(
+                                report["upstream_semantic_baselines"][branch][
+                                    "per_class_recall"
+                                ][class_name]
+                            )
+                            for report in selected_reports
+                        ]
+                    mean, std = _mean_std(values)
+                    means.append(mean)
+                    stds.append(std)
+                axes[0].bar(
+                    x + (offset - 1) * width,
+                    means,
+                    width,
+                    yerr=stds,
+                    color=color,
+                    label=label,
+                    capsize=3,
+                )
+            axes[0].set_xticks(x, class_names, rotation=18, ha="right")
+            axes[0].set_ylabel("Recall (%)")
+            axes[0].set_title("Class-wise recall")
+            axes[0].set_ylim(0.0, 105.0)
+            axes[0].grid(axis="y", alpha=0.25)
+            axes[0].legend(frameon=False, fontsize=8)
+            axes[0].spines[["top", "right"]].set_visible(False)
+
+            if has_confusion:
+                confusion = np.sum(confusion_rows, axis=0)
+                row_totals = confusion.sum(axis=1, keepdims=True)
+                normalized = np.divide(
+                    confusion,
+                    row_totals,
+                    out=np.zeros_like(confusion),
+                    where=row_totals > 0,
+                )
+                image = axes[1].imshow(
+                    normalized * 100.0,
+                    vmin=0.0,
+                    vmax=100.0,
+                    cmap="Blues",
+                    aspect="auto",
+                )
+                for row_index in range(len(class_names)):
+                    for column_index in range(len(class_names)):
+                        value = normalized[row_index, column_index] * 100.0
+                        axes[1].text(
+                            column_index,
+                            row_index,
+                            f"{value:.1f}",
+                            ha="center",
+                            va="center",
+                            fontsize=8,
+                            color="white" if value >= 55.0 else "black",
+                        )
+                axes[1].set_xticks(x, class_names, rotation=18, ha="right")
+                axes[1].set_yticks(x, class_names)
+                axes[1].set_xlabel("Predicted class")
+                axes[1].set_ylabel("True class")
+                axes[1].set_title("Aggregated normalized confusion matrix")
+                fig.colorbar(image, ax=axes[1], label="Recall within true class (%)")
+            else:
+                axes[1].axis("off")
+                axes[1].text(
+                    0.5,
+                    0.5,
+                    "Confusion matrices are unavailable",
+                    ha="center",
+                    va="center",
+                )
+            fig.suptitle(
+                f"Class-level classification analysis ({selected_job}, n={len(selected_reports)})",
+                fontweight="bold",
+            )
+            fig.tight_layout()
+            manifest["class_recall_confusion"] = _save_figure(
+                fig,
+                output_dir,
+                "p3_llm_class_recall_confusion",
+                formats,
+            )
+            plt.close(fig)
+
+    seed_rows = [row for row in rows if row["job"] == selected_job]
+    if seed_rows:
+        seed_rows.sort(key=lambda row: int(row["seed"]))
+        fig, axis = plt.subplots(figsize=(7.8, 4.4))
+        seed_labels = [str(row["seed"]) for row in seed_rows]
+        x = np.arange(len(seed_rows))
+        width = 0.25
+        axis.bar(
+            x - width,
+            [100.0 * float(row["global_identity_balanced_accuracy"]) for row in seed_rows],
+            width,
+            label="Small-model identity",
+            color="#7A8291",
+        )
+        axis.bar(
+            x,
+            [100.0 * float(row["fused_balanced_accuracy"]) for row in seed_rows],
+            width,
+            label="Hierarchical fusion",
+            color="#2A9D8F",
+        )
+        axis.bar(
+            x + width,
+            [100.0 * float(row["llm_balanced_accuracy"]) for row in seed_rows],
+            width,
+            label="Continuous-prompt LLM",
+            color="#D55E00",
+        )
+        axis.set_xticks(x, seed_labels)
+        axis.set_xlabel("Random seed")
+        axis.set_ylabel("Balanced accuracy (%)")
+        axis.set_title(
+            f"Classification stability across seeds ({selected_job})",
+            fontweight="bold",
+        )
+        axis.grid(axis="y", alpha=0.25)
+        axis.legend(frameon=False)
+        axis.spines[["top", "right"]].set_visible(False)
+        fig.tight_layout()
+        manifest["seed_stability"] = _save_figure(
+            fig,
+            output_dir,
+            "p3_llm_seed_stability",
+            formats,
+        )
+        plt.close(fig)
+    return manifest
 
 
 def main() -> int:
@@ -302,10 +582,22 @@ def main() -> int:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    _plot(
+    figures = _plot(
         summary,
+        rows,
+        domain_rows,
+        reports,
         output_dir,
         [value.strip() for value in args.formats.split(",") if value.strip()],
+    )
+    (output_dir / "figure_manifest.json").write_text(
+        json.dumps(figures, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    payload["figures"] = figures
+    (output_dir / "p3_llm_analysis.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
