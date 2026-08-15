@@ -84,6 +84,11 @@ class PaperMatrixTests(unittest.TestCase):
         self.assertEqual(command[command.index("--lambda-rel") + 1], "0.0")
         self.assertEqual(command[command.index("--strategy") + 1], "full")
         self.assertEqual(command[command.index("--seed") + 1], "52")
+        self.assertEqual(command[command.index("--branch-dim") + 1], "32")
+        self.assertEqual(
+            command[command.index("--encoder-kernels") + 1],
+            "7,15,31",
+        )
 
     def test_p3_commands_preserve_seed_and_unlock_ablation(self) -> None:
         continuous = next(

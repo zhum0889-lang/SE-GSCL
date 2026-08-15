@@ -76,6 +76,8 @@
   "p1_common": {
     "semantic_dim": 256,
     "num_tokens": 32,
+    "branch_dim": 32,
+    "encoder_kernels": [7, 15, 31],
     "batch_size": 64,
     "initial_epochs": 20,
     "continual_epochs": 20,

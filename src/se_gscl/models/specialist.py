@@ -43,6 +43,7 @@ class SEGSCLSpecialist(nn.Module):
         token_dim: int = 256,
         branch_dim: int = 32,
         num_tokens: int = 32,
+        kernels: tuple[int, ...] = (7, 15, 31),
         num_domains: int | None = None,
         condition_dim: int = 0,
     ) -> None:
@@ -52,6 +53,7 @@ class SEGSCLSpecialist(nn.Module):
             token_dim=token_dim,
             branch_dim=branch_dim,
             num_tokens=num_tokens,
+            kernels=kernels,
         )
         self.fault_branch = _TokenBranch(token_dim)
         self.condition_branch = _TokenBranch(token_dim)

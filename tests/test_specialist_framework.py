@@ -26,6 +26,7 @@ class SpecialistFrameworkTests(unittest.TestCase):
             token_dim=64,
             branch_dim=8,
             num_tokens=16,
+            kernels=(5, 9),
             num_domains=4,
             condition_dim=3,
         )
@@ -37,6 +38,7 @@ class SpecialistFrameworkTests(unittest.TestCase):
         self.assertEqual(output.condition_embedding.shape, (5, 64))
         self.assertEqual(output.domain_logits.shape, (5, 4))
         self.assertEqual(output.condition_values.shape, (5, 3))
+        self.assertEqual(len(model.encoder.branches), 2)
         torch.testing.assert_close(
             output.fault_embedding.norm(dim=1),
             torch.ones(5),

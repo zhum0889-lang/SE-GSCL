@@ -99,6 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-windows-per-file", type=int, default=24)
     parser.add_argument("--semantic-dim", type=int, default=64)
     parser.add_argument("--num-tokens", type=int, default=16)
+    parser.add_argument("--branch-dim", type=int, default=32)
+    parser.add_argument(
+        "--encoder-kernels",
+        default="7,15,31",
+        help="Comma-separated positive odd kernel sizes for the signal encoder.",
+    )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--initial-epochs", type=int, default=2)
     parser.add_argument("--continual-epochs", type=int, default=2)
@@ -363,6 +369,17 @@ def _write_matrix_csv(
 
 def main() -> int:
     args = parse_args()
+    encoder_kernels = tuple(
+        int(value.strip())
+        for value in args.encoder_kernels.split(",")
+        if value.strip()
+    )
+    if args.branch_dim <= 0:
+        raise ValueError("branch_dim must be positive.")
+    if not encoder_kernels or any(
+        value <= 0 or value % 2 == 0 for value in encoder_kernels
+    ):
+        raise ValueError("encoder_kernels must contain positive odd integers.")
     _set_seed(args.seed)
     domains = [int(value) for value in args.domains.split(",") if value.strip()]
     if len(domains) < 2:
@@ -407,7 +424,9 @@ def main() -> int:
     model = SEGSCLSpecialist(
         input_channels=input_channels,
         token_dim=args.semantic_dim,
+        branch_dim=args.branch_dim,
         num_tokens=args.num_tokens,
+        kernels=encoder_kernels,
         num_domains=len(domains),
     ).to(device)
     projected_bank = ProjectedTextPrototypeBank(
@@ -429,6 +448,17 @@ def main() -> int:
     initial_optimizer = torch.optim.AdamW(
         list(model.parameters()) + list(projected_bank.parameters()),
         lr=args.learning_rate,
+    )
+    initial_trainable_parameters = sum(
+        parameter.numel()
+        for parameter in list(model.parameters())
+        + list(projected_bank.parameters())
+        if parameter.requires_grad
+    )
+    continual_trainable_parameters = sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
     )
     history: list[dict[str, float | int | str]] = []
     initial_loader = _balanced_loader(
@@ -734,7 +764,9 @@ def main() -> int:
         "model_config": {
             "input_channels": input_channels,
             "token_dim": args.semantic_dim,
+            "branch_dim": args.branch_dim,
             "num_tokens": args.num_tokens,
+            "encoder_kernels": list(encoder_kernels),
             "num_domains": len(domains),
             "window_size": args.window_size,
             "step_size": args.step_size,
@@ -769,6 +801,9 @@ def main() -> int:
                 ),
             },
             "seed": args.seed,
+            "projector_policy": "train_on_initial_domain_then_freeze",
+            "initial_trainable_parameters": initial_trainable_parameters,
+            "continual_trainable_parameters": continual_trainable_parameters,
         },
         "normalization": stats.to_dict(),
         "memory_capacity_per_class": args.replay_per_class

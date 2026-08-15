@@ -126,6 +126,13 @@ def build_train_command(
         str(settings["semantic_dim"]),
         "--num-tokens",
         str(settings["num_tokens"]),
+        "--branch-dim",
+        str(settings.get("branch_dim", 32)),
+        "--encoder-kernels",
+        ",".join(
+            str(value)
+            for value in settings.get("encoder_kernels", [7, 15, 31])
+        ),
         "--batch-size",
         str(settings["batch_size"]),
         "--initial-epochs",
