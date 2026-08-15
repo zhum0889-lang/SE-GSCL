@@ -39,11 +39,17 @@ def main() -> int:
     texts: list[str] = []
     class_ids: list[int] = []
     class_names: list[str] = []
+    description_ids: list[str] = []
+    description_types: list[str] = []
+    class_summaries: list[str] = []
     for row in ontology["classes"]:
         class_names.append(str(row["name"]))
+        class_summaries.append(str(row.get("prompt_summary", "")))
         for description in row["descriptions"]:
-            texts.append(str(description))
+            texts.append(str(description["text"]))
             class_ids.append(int(row["id"]))
+            description_ids.append(str(description["id"]))
+            description_types.append(str(description["type"]))
 
     encoder = FrozenDecoderTextEncoder(
         args.model,
@@ -67,6 +73,9 @@ def main() -> int:
         model_id=args.model,
         ontology=str(ontology["ontology"]),
         version=str(ontology["version"]),
+        description_ids=tuple(description_ids),
+        description_types=tuple(description_types),
+        class_summaries=tuple(class_summaries),
     )
     output = cache.save(args.output_dir)
     print(
@@ -77,6 +86,7 @@ def main() -> int:
                 "model": args.model,
                 "classes": len(class_names),
                 "descriptions": len(texts),
+                "description_types": sorted(set(description_types)),
                 "hidden_size": cache.hidden_size,
             },
             indent=2,

@@ -25,6 +25,7 @@ def build_continuous_context(
     supported_modes = {
         "full",
         "no_condition",
+        "no_fuzzy_identity",
         "fault_identity_only",
     }
     if mode not in supported_modes:
@@ -32,14 +33,32 @@ def build_continuous_context(
             f"Unsupported continuous context mode {mode!r}; "
             f"choose from {sorted(supported_modes)}."
         )
-    fuzzy = np.asarray(
+    fuzzy_symptoms = np.asarray(
         arrays["fuzzy_symptom_embeddings"],
         dtype=np.float32,
     )
     # Keep semantic directions comparable across samples while retaining the
     # posterior and reliability scalars below in their native [0, 1] ranges.
-    fuzzy_norm = np.linalg.norm(fuzzy, axis=1, keepdims=True)
-    fuzzy = fuzzy / np.maximum(fuzzy_norm, 1e-6)
+    fuzzy_symptom_norm = np.linalg.norm(
+        fuzzy_symptoms,
+        axis=1,
+        keepdims=True,
+    )
+    fuzzy_symptoms = fuzzy_symptoms / np.maximum(fuzzy_symptom_norm, 1e-6)
+    fuzzy_identity = None
+    identity_description_probabilities = None
+    if "fuzzy_identity_embeddings" in arrays:
+        fuzzy_identity = np.asarray(
+            arrays["fuzzy_identity_embeddings"],
+            dtype=np.float32,
+        )
+        identity_norm = np.linalg.norm(fuzzy_identity, axis=1, keepdims=True)
+        fuzzy_identity = fuzzy_identity / np.maximum(identity_norm, 1e-6)
+    if "identity_description_probabilities" in arrays:
+        identity_description_probabilities = np.asarray(
+            arrays["identity_description_probabilities"],
+            dtype=np.float32,
+        )
     fused = np.asarray(arrays["fused_probabilities"], dtype=np.float32)
     global_probabilities = np.asarray(
         arrays["global_probabilities"],
@@ -50,7 +69,7 @@ def build_continuous_context(
         dtype=np.float32,
     )
     if not (
-        len(fuzzy)
+        len(fuzzy_symptoms)
         == len(fused)
         == len(global_probabilities)
         == len(local_probabilities)
@@ -76,12 +95,23 @@ def build_continuous_context(
         axis=1,
     )
     if mode == "fault_identity_only":
+        identity_blocks = []
+        if fuzzy_identity is not None:
+            identity_blocks.append(fuzzy_identity)
+        if identity_description_probabilities is not None:
+            identity_blocks.append(identity_description_probabilities)
         return np.concatenate(
-            [global_probabilities, reliability],
+            [*identity_blocks, global_probabilities, reliability],
             axis=1,
         ).astype(np.float32)
 
-    blocks = [fuzzy, fused, reliability]
+    blocks = []
+    use_fuzzy_identity = mode != "no_fuzzy_identity"
+    if use_fuzzy_identity and fuzzy_identity is not None:
+        blocks.append(fuzzy_identity)
+    if use_fuzzy_identity and identity_description_probabilities is not None:
+        blocks.append(identity_description_probabilities)
+    blocks.extend([fuzzy_symptoms, fused, reliability])
     if mode == "full":
         if "condition_features" not in arrays:
             raise ValueError(
@@ -92,7 +122,7 @@ def build_continuous_context(
             arrays["condition_features"],
             dtype=np.float32,
         )
-        if len(condition) != len(fuzzy):
+        if len(condition) != len(fuzzy_symptoms):
             raise ValueError("Condition features must share sample count.")
         blocks.append(condition)
     return np.concatenate(blocks, axis=1).astype(np.float32)

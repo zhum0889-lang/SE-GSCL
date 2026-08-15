@@ -24,6 +24,7 @@ from se_gscl.losses import (  # noqa: E402
 from se_gscl.semantics import (  # noqa: E402
     ProjectedTextPrototypeBank,
     TextEmbeddingCache,
+    hierarchical_fuzzy_identity,
     masked_mean_pool,
 )
 
@@ -52,14 +53,28 @@ class P1SemanticPipelineTests(unittest.TestCase):
             model_id="unit-test",
             ontology="test",
             version="v1",
+            description_ids=("a1", "a2", "b1", "b2", "c1", "c2"),
+            description_types=(
+                "identity",
+                "mechanism",
+                "identity",
+                "mechanism",
+                "identity",
+                "mechanism",
+            ),
+            class_summaries=("summary a", "summary b", "summary c"),
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             cache.save(temp_dir)
             restored = TextEmbeddingCache.load(temp_dir)
         torch.testing.assert_close(cache.embeddings, restored.embeddings)
+        self.assertEqual(cache.description_types, restored.description_types)
+        self.assertEqual(cache.class_summaries, restored.class_summaries)
         bank = ProjectedTextPrototypeBank(restored, semantic_dim=8)
         prototypes = bank()
+        descriptions = bank.description_prototypes()
         self.assertEqual(prototypes.shape, (3, 8))
+        self.assertEqual(descriptions.shape, (6, 8))
         torch.testing.assert_close(
             prototypes.norm(dim=1),
             torch.ones(3),
@@ -68,6 +83,23 @@ class P1SemanticPipelineTests(unittest.TestCase):
         )
         frozen = bank.freeze("frozen-v1")
         self.assertFalse(frozen.prototypes.requires_grad)
+
+    def test_fuzzy_identity_preserves_class_and_facet_uncertainty(self) -> None:
+        descriptions = torch.tensor(
+            [[1.0, 0.0], [0.8, 0.2], [0.0, 1.0], [0.2, 0.8]]
+        )
+        joint, fuzzy = hierarchical_fuzzy_identity(
+            signal_embeddings=torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            class_probabilities=torch.tensor([[0.7, 0.3], [0.2, 0.8]]),
+            description_prototypes=descriptions,
+            description_class_ids=torch.tensor([0, 0, 1, 1]),
+            temperature=0.1,
+        )
+        self.assertEqual(joint.shape, (2, 4))
+        self.assertEqual(fuzzy.shape, (2, 2))
+        torch.testing.assert_close(joint.sum(dim=1), torch.ones(2))
+        torch.testing.assert_close(joint[:, :2].sum(dim=1), torch.tensor([0.7, 0.2]))
+        torch.testing.assert_close(fuzzy.norm(dim=1), torch.ones(2))
 
     def test_balanced_sampler_constructs_cross_domain_pairs(self) -> None:
         labels = np.asarray([0] * 4 + [1] * 8 + [2] * 12 + [3] * 16)

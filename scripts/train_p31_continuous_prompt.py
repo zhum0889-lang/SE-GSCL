@@ -61,7 +61,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--context-mode",
-        choices=("full", "no_condition", "fault_identity_only"),
+        choices=(
+            "full",
+            "no_condition",
+            "no_fuzzy_identity",
+            "fault_identity_only",
+        ),
         default="full",
     )
     parser.add_argument(
@@ -139,11 +144,29 @@ def _subset(
     }
 
 
-def _instruction(class_names: list[str]) -> str:
+def _instruction(
+    class_names: list[str],
+    class_semantic_summaries: dict[str, str] | None = None,
+) -> str:
     labels = ", ".join(class_names)
+    ontology = ""
+    if class_semantic_summaries:
+        rows = [
+            f"- {name}: {class_semantic_summaries[name]}"
+            for name in class_names
+            if class_semantic_summaries.get(name)
+        ]
+        if rows:
+            ontology = "\nFault ontology:\n" + "\n".join(rows) + "\n"
     return (
-        "Continuous semantic tokens encoding one bearing vibration sample "
-        "precede this instruction. Diagnose the sample using those tokens. "
+        "Continuous semantic tokens for one bearing vibration sample precede "
+        "this instruction. They preserve a fuzzy mixture over multiple fault "
+        "identity descriptions, local physical symptoms, posterior evidence, "
+        "reliability, and optional observable operating context. Treat them "
+        "as graded evidence rather than as a hard upstream label."
+        f"{ontology}"
+        "Use operating context only to interpret how a signature shifts; do "
+        "not treat a condition change itself as a fault. "
         f"Reply with exactly one label from: {labels}.\nDiagnosis:"
     )
 
@@ -668,9 +691,17 @@ def main() -> int:
             model.gradient_checkpointing_enable()
 
     class_names = [str(value) for value in report["class_names"]]
+    class_semantic_summaries = {
+        str(key): str(value)
+        for key, value in report.get("class_semantic_summaries", {}).items()
+    }
+    instruction_text = _instruction(
+        class_names,
+        class_semantic_summaries,
+    )
     instruction_ids = torch.tensor(
         tokenizer.encode(
-            _instruction(class_names),
+            instruction_text,
             add_special_tokens=True,
         ),
         dtype=torch.long,
@@ -938,7 +969,7 @@ def main() -> int:
         "context_mean": torch.from_numpy(context_mean),
         "context_std": torch.from_numpy(context_std),
         "class_names": class_names,
-        "instruction": _instruction(class_names),
+        "instruction": instruction_text,
     }
     torch.save(checkpoint, output_dir / "continuous_prompt_adapter.pt")
     if args.llm_tuning == "lora":
@@ -970,6 +1001,13 @@ def main() -> int:
             "adapter_rank": args.adapter_rank,
             "context_mode": args.context_mode,
             "condition_context_enabled": args.context_mode == "full",
+            "fuzzy_identity_enabled": (
+                "fuzzy_identity_embeddings" in train_arrays
+            ),
+            "description_posterior_enabled": (
+                "identity_description_probabilities" in train_arrays
+            ),
+            "ontology_guidance_enabled": bool(class_semantic_summaries),
             "normalization": (
                 "sample-wise L2 normalization for fuzzy semantics; "
                 "posterior and reliability values remain in [0,1]"

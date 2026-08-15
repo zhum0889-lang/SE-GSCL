@@ -45,6 +45,12 @@ class ProjectedTextPrototypeBank(nn.Module):
         ]
         return F.normalize(torch.stack(prototypes, dim=0), dim=-1)
 
+    def description_prototypes(self) -> torch.Tensor:
+        """Return normalized projected embeddings for every text description."""
+
+        centered = self.text_embeddings - self.text_center
+        return F.normalize(self.projection(centered), dim=-1)
+
     @torch.no_grad()
     def freeze(self, version: str | None = None) -> FrozenPrototypeBank:
         return FrozenPrototypeBank(

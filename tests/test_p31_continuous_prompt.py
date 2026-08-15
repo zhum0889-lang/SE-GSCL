@@ -110,6 +110,49 @@ class P31ContinuousPromptTests(unittest.TestCase):
         self.assertEqual(identity.shape, (2, 7))
         np.testing.assert_allclose(full[:, -8:], arrays["condition_features"])
 
+    def test_context_retains_fuzzy_identity_and_description_posterior(self) -> None:
+        arrays = {
+            "fuzzy_identity_embeddings": np.ones((2, 5), dtype=np.float32),
+            "identity_description_probabilities": np.asarray(
+                [[0.4, 0.1, 0.2, 0.3], [0.1, 0.4, 0.3, 0.2]],
+                dtype=np.float32,
+            ),
+            "fuzzy_symptom_embeddings": np.ones((2, 6), dtype=np.float32),
+            "fused_probabilities": np.asarray(
+                [[0.6, 0.2, 0.1, 0.1], [0.1, 0.2, 0.6, 0.1]],
+                dtype=np.float32,
+            ),
+            "global_probabilities": np.asarray(
+                [[0.7, 0.1, 0.1, 0.1], [0.1, 0.1, 0.7, 0.1]],
+                dtype=np.float32,
+            ),
+            "local_probabilities": np.asarray(
+                [[0.6, 0.2, 0.1, 0.1], [0.1, 0.2, 0.6, 0.1]],
+                dtype=np.float32,
+            ),
+        }
+        full_semantics = build_continuous_context(arrays, mode="no_condition")
+        without_identity = build_continuous_context(
+            arrays,
+            mode="no_fuzzy_identity",
+        )
+        identity = build_continuous_context(
+            arrays,
+            mode="fault_identity_only",
+        )
+        self.assertEqual(full_semantics.shape, (2, 22))
+        self.assertEqual(without_identity.shape, (2, 13))
+        self.assertEqual(identity.shape, (2, 16))
+        np.testing.assert_allclose(
+            np.linalg.norm(full_semantics[:, :5], axis=1),
+            np.ones(2),
+            rtol=1e-5,
+        )
+        np.testing.assert_allclose(
+            full_semantics[:, 5:9],
+            arrays["identity_description_probabilities"],
+        )
+
     def test_adapter_emits_prompt_tokens_and_gradients(self) -> None:
         adapter = LowRankContinuousPromptAdapter(
             input_dim=15,

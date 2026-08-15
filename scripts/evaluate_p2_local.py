@@ -49,6 +49,7 @@ from se_gscl.semantics import (  # noqa: E402
     ResidualSymptomPrototypeBank,
     SymptomEmbeddingCache,
     TextEmbeddingCache,
+    hierarchical_fuzzy_identity,
 )
 
 
@@ -413,6 +414,8 @@ def _collect_continuous_prompt_split(
     specialist: SEGSCLSpecialist,
     frozen_global: FrozenPrototypeBank,
     matcher: LocalSymptomMatcher,
+    identity_description_prototypes: torch.Tensor,
+    identity_description_class_ids: torch.Tensor,
     dataset: WindowDataset,
     reliability_gate,
     args: argparse.Namespace,
@@ -423,6 +426,8 @@ def _collect_continuous_prompt_split(
         "domains": [],
         "sample_ids": [],
         "global_probabilities": [],
+        "identity_description_probabilities": [],
+        "fuzzy_identity_embeddings": [],
         "local_probabilities": [],
         "fused_probabilities": [],
         "fusion_local_weights": [],
@@ -437,13 +442,20 @@ def _collect_continuous_prompt_split(
         shuffle=False,
     ):
         specialist_output = specialist(batch["x"].to(device))
-        global_probabilities = torch.softmax(
+        global_probability_tensor = torch.softmax(
             frozen_global.similarities(
                 specialist_output.fault_embedding
             )
             / 0.07,
             dim=1,
-        ).cpu().numpy()
+        )
+        identity_joint, fuzzy_identity = hierarchical_fuzzy_identity(
+            specialist_output.fault_embedding,
+            global_probability_tensor,
+            identity_description_prototypes,
+            identity_description_class_ids,
+        )
+        global_probabilities = global_probability_tensor.cpu().numpy()
         local_output = matcher(specialist_output.fault_tokens)
         local_probabilities = (
             local_output.class_probabilities.cpu().numpy()
@@ -465,6 +477,12 @@ def _collect_continuous_prompt_split(
         rows["domains"].append(batch["domain"].numpy())
         rows["sample_ids"].append(batch["sample_id"].numpy())
         rows["global_probabilities"].append(global_probabilities)
+        rows["identity_description_probabilities"].append(
+            identity_joint.cpu().numpy()
+        )
+        rows["fuzzy_identity_embeddings"].append(
+            fuzzy_identity.cpu().numpy()
+        )
         rows["local_probabilities"].append(local_probabilities)
         rows["fused_probabilities"].append(fused_probabilities)
         rows["fusion_local_weights"].append(local_weights)
@@ -575,6 +593,10 @@ def main() -> int:
     )
     projected_global.load_state_dict(_load_state(projector_path))
     projected_global.to(device).eval().requires_grad_(False)
+    identity_description_prototypes = (
+        projected_global.description_prototypes().detach()
+    )
+    identity_description_class_ids = global_cache.class_ids.to(device)
 
     frozen_global = FrozenPrototypeBank(
         torch.zeros(len(class_names), int(model_config["token_dim"])),
@@ -867,6 +889,8 @@ def main() -> int:
             specialist,
             frozen_global,
             matcher,
+            identity_description_prototypes,
+            identity_description_class_ids,
             split_dataset,
             reliability_gate,
             args,
@@ -890,6 +914,8 @@ def main() -> int:
         "domains": [],
         "sample_ids": [],
         "global_probabilities": [],
+        "identity_description_probabilities": [],
+        "fuzzy_identity_embeddings": [],
         "local_probabilities": [],
         "fused_probabilities": [],
         "fusion_local_weights": [],
@@ -906,6 +932,8 @@ def main() -> int:
         for domain in domains:
             labels_rows: list[np.ndarray] = []
             global_rows: list[np.ndarray] = []
+            identity_probability_rows: list[np.ndarray] = []
+            fuzzy_identity_rows: list[np.ndarray] = []
             local_rows: list[np.ndarray] = []
             joint_rows: list[np.ndarray] = []
             symptom_probability_rows: list[np.ndarray] = []
@@ -926,10 +954,18 @@ def main() -> int:
                     ) / 0.07,
                     dim=1,
                 )
+                identity_joint, fuzzy_identity = hierarchical_fuzzy_identity(
+                    specialist_output.fault_embedding,
+                    global_probabilities,
+                    identity_description_prototypes,
+                    identity_description_class_ids,
+                )
                 local_output = matcher(specialist_output.fault_tokens)
                 labels_rows.append(batch["label"].numpy())
                 sample_rows.append(batch["sample_id"].numpy())
                 global_rows.append(global_probabilities.cpu().numpy())
+                identity_probability_rows.append(identity_joint.cpu().numpy())
+                fuzzy_identity_rows.append(fuzzy_identity.cpu().numpy())
                 local_rows.append(local_output.class_probabilities.cpu().numpy())
                 joint_rows.append(local_output.joint_probabilities.cpu().numpy())
                 symptom_probability_rows.append(
@@ -951,6 +987,10 @@ def main() -> int:
             labels = np.concatenate(labels_rows)
             sample_ids = np.concatenate(sample_rows)
             global_probabilities = np.concatenate(global_rows)
+            identity_description_probabilities = np.concatenate(
+                identity_probability_rows
+            )
+            fuzzy_identity_embeddings = np.concatenate(fuzzy_identity_rows)
             local_probabilities = np.concatenate(local_rows)
             joint_probabilities = np.concatenate(joint_rows)
             symptom_probabilities = np.concatenate(
@@ -1053,6 +1093,12 @@ def main() -> int:
             arrays["domains"].append(np.full(len(labels), domain, dtype=np.int64))
             arrays["sample_ids"].append(sample_ids)
             arrays["global_probabilities"].append(global_probabilities)
+            arrays["identity_description_probabilities"].append(
+                identity_description_probabilities
+            )
+            arrays["fuzzy_identity_embeddings"].append(
+                fuzzy_identity_embeddings
+            )
             arrays["local_probabilities"].append(local_probabilities)
             arrays["fused_probabilities"].append(fused_probabilities)
             arrays["fusion_local_weights"].append(local_weights)
@@ -1075,6 +1121,12 @@ def main() -> int:
         **{key: np.concatenate(value) for key, value in arrays.items()},
         symptom_prototypes=final_symptom_prototypes.cpu().numpy(),
         symptom_class_ids=symptom_bank.class_ids.cpu().numpy(),
+        identity_description_prototypes=(
+            identity_description_prototypes.cpu().numpy()
+        ),
+        identity_description_class_ids=(
+            identity_description_class_ids.cpu().numpy()
+        ),
     )
     with (output_dir / "evaluation_predictions.jsonl").open(
         "w",
@@ -1104,6 +1156,40 @@ def main() -> int:
         "dataset": report["dataset"],
         "domains": domains,
         "class_names": class_names,
+        "identity_descriptions": {
+            class_names[class_id]: [
+                {
+                    "id": (
+                        global_cache.description_ids[index]
+                        if global_cache.description_ids
+                        else f"description_{index}"
+                    ),
+                    "type": (
+                        global_cache.description_types[index]
+                        if global_cache.description_types
+                        else "general"
+                    ),
+                    "text": global_cache.texts[index],
+                }
+                for index, value in enumerate(global_cache.class_ids.tolist())
+                if int(value) == class_id
+            ]
+            for class_id in range(len(class_names))
+        },
+        "class_semantic_summaries": {
+            class_names[class_id]: (
+                global_cache.class_summaries[class_id]
+                if global_cache.class_summaries
+                else global_cache.texts[
+                    int(
+                        (global_cache.class_ids == class_id)
+                        .nonzero(as_tuple=True)[0][0]
+                        .item()
+                    )
+                ]
+            )
+            for class_id in range(len(class_names))
+        },
         "symptom_names": symptom_bank.symptom_names,
         "symptom_class_ids": symptom_bank.class_ids.cpu().tolist(),
         "p1_dir": str(p1_dir.resolve()),
@@ -1111,6 +1197,14 @@ def main() -> int:
         "adapter_epochs": args.adapter_epochs,
         "specialist_frozen": True,
         "global_text_projector_frozen": True,
+        "fuzzy_identity_semantics": {
+            "enabled": True,
+            "descriptions": len(global_cache.texts),
+            "construction": (
+                "global class posterior multiplied by within-class soft "
+                "description matching"
+            ),
+        },
         "local_symptom_projector_trainable": (
             args.physics_guided and not args.semantic_guard
         ),

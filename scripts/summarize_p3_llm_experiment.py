@@ -11,6 +11,7 @@ from typing import Any
 
 
 DEFAULT_JOBS = (
+    "continuous_no_fuzzy_identity",
     "continuous_identity_only",
     "continuous_no_condition",
     "continuous_full",
