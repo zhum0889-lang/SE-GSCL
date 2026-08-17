@@ -27,6 +27,9 @@ class SpecialistFrameworkTests(unittest.TestCase):
             branch_dim=8,
             num_tokens=16,
             kernels=(5, 9),
+            temporal_dilations=(1, 2, 4),
+            temporal_dropout=0.1,
+            normalization="group",
             num_domains=4,
             condition_dim=3,
         )
@@ -39,6 +42,13 @@ class SpecialistFrameworkTests(unittest.TestCase):
         self.assertEqual(output.domain_logits.shape, (5, 4))
         self.assertEqual(output.condition_values.shape, (5, 3))
         self.assertEqual(len(model.encoder.branches), 2)
+        self.assertEqual(len(model.encoder.temporal_mixer), 3)
+        self.assertTrue(
+            any(
+                isinstance(module, torch.nn.GroupNorm)
+                for module in model.encoder.modules()
+            )
+        )
         torch.testing.assert_close(
             output.fault_embedding.norm(dim=1),
             torch.ones(5),
@@ -81,6 +91,22 @@ class SpecialistFrameworkTests(unittest.TestCase):
             any(parameter.grad is not None for parameter in model.parameters())
         )
         self.assertIsNone(bank.prototypes.grad)
+
+    def test_temporal_mixer_receives_gradients(self) -> None:
+        model = SEGSCLSpecialist(
+            token_dim=32,
+            branch_dim=8,
+            num_tokens=8,
+            temporal_dilations=(1, 2),
+        )
+        output = model(torch.randn(4, 1, 1024))
+        output.fault_tokens.square().mean().backward()
+        gradients = [
+            parameter.grad
+            for parameter in model.encoder.temporal_mixer.parameters()
+        ]
+        self.assertTrue(gradients)
+        self.assertTrue(all(gradient is not None for gradient in gradients))
 
     def test_cross_condition_loss_skips_batches_without_valid_pairs(self) -> None:
         embeddings = torch.randn(4, 16, requires_grad=True)

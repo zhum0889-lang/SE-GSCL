@@ -105,6 +105,20 @@ def parse_args() -> argparse.Namespace:
         default="7,15,31",
         help="Comma-separated positive odd kernel sizes for the signal encoder.",
     )
+    parser.add_argument(
+        "--encoder-dilations",
+        default="",
+        help=(
+            "Comma-separated positive dilation rates for optional residual "
+            "token mixing; empty preserves the original encoder."
+        ),
+    )
+    parser.add_argument("--encoder-dropout", type=float, default=0.0)
+    parser.add_argument(
+        "--encoder-normalization",
+        choices=("batch", "group"),
+        default="batch",
+    )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--initial-epochs", type=int, default=2)
     parser.add_argument("--continual-epochs", type=int, default=2)
@@ -374,12 +388,21 @@ def main() -> int:
         for value in args.encoder_kernels.split(",")
         if value.strip()
     )
+    encoder_dilations = tuple(
+        int(value.strip())
+        for value in args.encoder_dilations.split(",")
+        if value.strip()
+    )
     if args.branch_dim <= 0:
         raise ValueError("branch_dim must be positive.")
     if not encoder_kernels or any(
         value <= 0 or value % 2 == 0 for value in encoder_kernels
     ):
         raise ValueError("encoder_kernels must contain positive odd integers.")
+    if any(value <= 0 for value in encoder_dilations):
+        raise ValueError("encoder_dilations must contain positive integers.")
+    if not 0.0 <= args.encoder_dropout < 1.0:
+        raise ValueError("encoder_dropout must be in [0, 1).")
     _set_seed(args.seed)
     domains = [int(value) for value in args.domains.split(",") if value.strip()]
     if len(domains) < 2:
@@ -427,6 +450,9 @@ def main() -> int:
         branch_dim=args.branch_dim,
         num_tokens=args.num_tokens,
         kernels=encoder_kernels,
+        temporal_dilations=encoder_dilations,
+        temporal_dropout=args.encoder_dropout,
+        normalization=args.encoder_normalization,
         num_domains=len(domains),
     ).to(device)
     projected_bank = ProjectedTextPrototypeBank(
@@ -767,6 +793,9 @@ def main() -> int:
             "branch_dim": args.branch_dim,
             "num_tokens": args.num_tokens,
             "encoder_kernels": list(encoder_kernels),
+            "encoder_dilations": list(encoder_dilations),
+            "encoder_dropout": args.encoder_dropout,
+            "encoder_normalization": args.encoder_normalization,
             "num_domains": len(domains),
             "window_size": args.window_size,
             "step_size": args.step_size,

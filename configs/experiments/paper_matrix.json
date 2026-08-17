@@ -78,6 +78,9 @@
     "num_tokens": 32,
     "branch_dim": 32,
     "encoder_kernels": [7, 15, 31],
+    "encoder_dilations": [],
+    "encoder_dropout": 0.0,
+    "encoder_normalization": "batch",
     "batch_size": 64,
     "initial_epochs": 20,
     "continual_epochs": 20,
@@ -110,6 +113,17 @@
       "group": "proposed",
       "strategy": "full",
       "label": "SE-GSCL"
+    },
+    {
+      "id": "se_gscl_temporal",
+      "group": "architecture_candidate",
+      "strategy": "full",
+      "label": "SE-GSCL with domain-stable temporal encoder",
+      "overrides": {
+        "encoder_dilations": [1, 2],
+        "encoder_dropout": 0.0,
+        "encoder_normalization": "group"
+      }
     },
     {
       "id": "wo_cross_condition",

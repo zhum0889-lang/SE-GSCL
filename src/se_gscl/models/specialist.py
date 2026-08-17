@@ -44,6 +44,9 @@ class SEGSCLSpecialist(nn.Module):
         branch_dim: int = 32,
         num_tokens: int = 32,
         kernels: tuple[int, ...] = (7, 15, 31),
+        temporal_dilations: tuple[int, ...] = (),
+        temporal_dropout: float = 0.0,
+        normalization: str = "batch",
         num_domains: int | None = None,
         condition_dim: int = 0,
     ) -> None:
@@ -54,6 +57,9 @@ class SEGSCLSpecialist(nn.Module):
             branch_dim=branch_dim,
             num_tokens=num_tokens,
             kernels=kernels,
+            temporal_dilations=temporal_dilations,
+            temporal_dropout=temporal_dropout,
+            normalization=normalization,
         )
         self.fault_branch = _TokenBranch(token_dim)
         self.condition_branch = _TokenBranch(token_dim)

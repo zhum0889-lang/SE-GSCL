@@ -89,6 +89,38 @@ class PaperMatrixTests(unittest.TestCase):
             command[command.index("--encoder-kernels") + 1],
             "7,15,31",
         )
+        self.assertEqual(command[command.index("--encoder-dilations") + 1], "")
+
+    def test_temporal_encoder_candidate_is_configurable(self) -> None:
+        job = next(
+            row
+            for row in self.matrix["p1_jobs"]
+            if row["id"] == "se_gscl_temporal"
+        )
+        command = build_train_command(
+            python_bin="python",
+            dataset="cwru4",
+            data_root=Path("data"),
+            text_cache=Path("cache"),
+            output_dir=Path("out"),
+            dataset_config=self.matrix["datasets"]["cwru4"],
+            job=job,
+            common=self.matrix["p1_common"],
+            seed=42,
+            device="cuda",
+        )
+        self.assertEqual(
+            command[command.index("--encoder-dilations") + 1],
+            "1,2",
+        )
+        self.assertEqual(
+            command[command.index("--encoder-dropout") + 1],
+            "0.0",
+        )
+        self.assertEqual(
+            command[command.index("--encoder-normalization") + 1],
+            "group",
+        )
 
     def test_p3_commands_preserve_seed_and_unlock_ablation(self) -> None:
         continuous = next(

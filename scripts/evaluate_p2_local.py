@@ -573,7 +573,18 @@ def main() -> int:
     specialist = SEGSCLSpecialist(
         input_channels=int(model_config["input_channels"]),
         token_dim=int(model_config["token_dim"]),
+        branch_dim=int(model_config.get("branch_dim", 32)),
         num_tokens=int(model_config["num_tokens"]),
+        kernels=tuple(
+            int(value)
+            for value in model_config.get("encoder_kernels", [7, 15, 31])
+        ),
+        temporal_dilations=tuple(
+            int(value)
+            for value in model_config.get("encoder_dilations", [])
+        ),
+        temporal_dropout=float(model_config.get("encoder_dropout", 0.0)),
+        normalization=str(model_config.get("encoder_normalization", "batch")),
         num_domains=int(model_config["num_domains"]),
     )
     specialist.load_state_dict(_load_state(p1_dir / "specialist_final.pt"))

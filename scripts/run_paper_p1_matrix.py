@@ -133,6 +133,15 @@ def build_train_command(
             str(value)
             for value in settings.get("encoder_kernels", [7, 15, 31])
         ),
+        "--encoder-dilations",
+        ",".join(
+            str(value)
+            for value in settings.get("encoder_dilations", [])
+        ),
+        "--encoder-dropout",
+        str(settings.get("encoder_dropout", 0.0)),
+        "--encoder-normalization",
+        str(settings.get("encoder_normalization", "batch")),
         "--batch-size",
         str(settings["batch_size"]),
         "--initial-epochs",
