@@ -39,6 +39,7 @@ STRATEGY_DIRECTORY_ALIASES = {
 }
 ABLATION_JOBS = (
     "se_gscl_full",
+    "wo_text_semantics",
     "wo_cross_condition",
     "wo_relation",
     "wo_decorrelation",
@@ -48,6 +49,7 @@ SHORT_LABELS = {
     "lwf_relation": "LwF",
     "experience_replay": "Replay",
     "se_gscl_full": "SE-GSCL",
+    "wo_text_semantics": "w/o text semantics",
     "wo_cross_condition": "w/o cross-condition",
     "wo_relation": "w/o relation",
     "wo_decorrelation": "w/o decorrelation",
@@ -57,6 +59,7 @@ COLORS = {
     "lwf_relation": "#2A9D8F",
     "experience_replay": "#457B9D",
     "se_gscl_full": "#D55E00",
+    "wo_text_semantics": "#7A5195",
     "wo_cross_condition": "#CC79A7",
     "wo_relation": "#E9C46A",
     "wo_decorrelation": "#56B4E9",

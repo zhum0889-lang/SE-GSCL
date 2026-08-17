@@ -16,10 +16,27 @@ from se_gscl.losses import (  # noqa: E402
     global_prototype_alignment_loss,
 )
 from se_gscl.models import SEGSCLSpecialist  # noqa: E402
-from se_gscl.semantics import FrozenPrototypeBank  # noqa: E402
+from se_gscl.semantics import (  # noqa: E402
+    FrozenPrototypeBank,
+    LearnedPrototypeBank,
+)
 
 
 class SpecialistFrameworkTests(unittest.TestCase):
+    def test_signal_only_prototype_bank_freezes_normalized_anchors(self) -> None:
+        bank = LearnedPrototypeBank(["A", "B", "C"], semantic_dim=16)
+        prototypes = bank()
+        self.assertEqual(prototypes.shape, (3, 16))
+        torch.testing.assert_close(
+            prototypes.norm(dim=1),
+            torch.ones(3),
+            atol=1e-6,
+            rtol=1e-6,
+        )
+        frozen = bank.freeze("signal-only-v1")
+        self.assertEqual(frozen.version, "signal-only-v1")
+        self.assertFalse(frozen.prototypes.requires_grad)
+
     def test_specialist_emits_expected_tokens_and_heads(self) -> None:
         model = SEGSCLSpecialist(
             input_channels=3,

@@ -30,6 +30,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seeds", help="Comma-separated override.")
     parser.add_argument("--jobs", help="Comma-separated job IDs.")
+    parser.add_argument(
+        "--order",
+        help="Named domain-order variant from the dataset configuration.",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -86,6 +90,28 @@ def resolve_job_settings(
     return resolved
 
 
+def resolve_domain_order(
+    dataset_config: dict[str, Any],
+    requested: str | None,
+) -> tuple[str | None, list[int]]:
+    default = [int(value) for value in dataset_config["domain_order"]]
+    if not requested:
+        return None, default
+    variants = dict(dataset_config.get("domain_order_variants", {}))
+    if requested not in variants:
+        raise ValueError(
+            f"Unknown domain-order variant {requested!r}; "
+            f"available={sorted(variants)}"
+        )
+    selected = [int(value) for value in variants[requested]]
+    if len(selected) != len(default) or set(selected) != set(default):
+        raise ValueError(
+            f"Domain-order variant {requested!r} must be a permutation of "
+            "the configured domain_order."
+        )
+    return requested, selected
+
+
 def build_train_command(
     *,
     python_bin: str,
@@ -124,6 +150,8 @@ def build_train_command(
         str(dataset_config["max_windows_per_file"]),
         "--semantic-dim",
         str(settings["semantic_dim"]),
+        "--prototype-source",
+        str(settings.get("prototype_source", "text")),
         "--num-tokens",
         str(settings["num_tokens"]),
         "--branch-dim",
@@ -263,6 +291,8 @@ def main() -> int:
     if args.dataset not in matrix["datasets"]:
         raise ValueError(f"Dataset {args.dataset!r} is not in the paper matrix.")
     dataset_config = dict(matrix["datasets"][args.dataset])
+    order_id, domain_order = resolve_domain_order(dataset_config, args.order)
+    dataset_config["domain_order"] = domain_order
     data_root = Path(args.data_root)
     text_cache = Path(
         args.text_cache or str(dataset_config["global_text_cache"])
@@ -299,6 +329,8 @@ def main() -> int:
     seeds = selected_seeds(matrix, args.seeds)
     jobs = selected_jobs(matrix, args.jobs)
     dataset_root = Path(args.output_root) / args.dataset
+    if order_id is not None:
+        dataset_root = dataset_root / f"order_{order_id}"
     dataset_root.mkdir(parents=True, exist_ok=True)
     protocol_audit = (
         audit_dataset_protocol(
@@ -314,6 +346,7 @@ def main() -> int:
         "matrix": str(Path(args.matrix).resolve()),
         "matrix_version": matrix.get("version"),
         "dataset": args.dataset,
+        "domain_order_id": order_id,
         "dataset_config": dataset_config,
         "data_root": str(data_root.resolve()),
         "text_cache": str(text_cache.resolve()),
@@ -355,6 +388,7 @@ def main() -> int:
             output_dir.mkdir(parents=True, exist_ok=True)
             job_record = {
                 "dataset": args.dataset,
+                "domain_order_id": order_id,
                 "seed": seed,
                 "job": job,
                 "resolved_settings": resolve_job_settings(

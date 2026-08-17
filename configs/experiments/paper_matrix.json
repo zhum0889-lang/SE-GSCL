@@ -1,6 +1,6 @@
 {
   "name": "se_gscl_paper_matrix",
-  "version": "v3-faceted-semantics",
+  "version": "v4-semantic-anchor-evidence",
   "seeds": [42, 52, 62],
   "reporting": {
     "primary_metric": "balanced_accuracy.final_average_accuracy",
@@ -31,6 +31,11 @@
       "role": "primary_multifactor",
       "p3_p2_job": "semantic_local_adaptive",
       "domain_order": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+      "domain_order_variants": {
+        "bearing_major": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+        "condition_major": [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 4, 10, 16, 5, 11, 17],
+        "reverse": [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+      },
       "ontology": "configs/semantics/bearing_faults_4_v2.json",
       "global_text_cache": "results/semantic_cache/qwen25_7b_bearing4_faceted_v2",
       "symptom_text_cache": "results/semantic_cache/qwen25_7b_bearing4_symptoms_physics_v2",
@@ -81,6 +86,7 @@
     "encoder_dilations": [],
     "encoder_dropout": 0.0,
     "encoder_normalization": "batch",
+    "prototype_source": "text",
     "batch_size": 64,
     "initial_epochs": 20,
     "continual_epochs": 20,
@@ -113,6 +119,15 @@
       "group": "proposed",
       "strategy": "full",
       "label": "SE-GSCL"
+    },
+    {
+      "id": "wo_text_semantics",
+      "group": "p1_ablation",
+      "strategy": "full",
+      "label": "SE-GSCL with initial-domain learned anchors",
+      "overrides": {
+        "prototype_source": "learned"
+      }
     },
     {
       "id": "se_gscl_temporal",

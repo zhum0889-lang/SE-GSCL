@@ -1,7 +1,7 @@
 """Frozen LLM semantics and versioned prototype interfaces."""
 
 from .fuzzy_identity import hierarchical_fuzzy_identity
-from .prototype_bank import FrozenPrototypeBank
+from .prototype_bank import FrozenPrototypeBank, LearnedPrototypeBank
 from .symptom_bank import (
     FrozenSymptomPrototypeBank,
     ProjectedSymptomPrototypeBank,
@@ -15,6 +15,7 @@ from .text_projection import ProjectedTextPrototypeBank
 __all__ = [
     "FrozenDecoderTextEncoder",
     "FrozenPrototypeBank",
+    "LearnedPrototypeBank",
     "FrozenSymptomPrototypeBank",
     "ProjectedTextPrototypeBank",
     "ProjectedSymptomPrototypeBank",

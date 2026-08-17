@@ -17,6 +17,7 @@ from scripts.run_paper_p1_matrix import (  # noqa: E402
     build_train_command,
     dataset_root_candidates,
     load_matrix,
+    resolve_domain_order,
 )
 from scripts.summarize_paper_matrix import _aggregate  # noqa: E402
 from se_gscl.physics import PHYSICS_KEYS  # noqa: E402
@@ -51,6 +52,10 @@ class PaperMatrixTests(unittest.TestCase):
         primary = self.matrix["datasets"]["multidomain8_disjoint18"]
         self.assertEqual(primary["role"], "primary_multifactor")
         self.assertEqual(primary["domain_order"], list(range(18)))
+        self.assertEqual(
+            set(primary["domain_order_variants"]),
+            {"bearing_major", "condition_major", "reverse"},
+        )
         self.assertGreaterEqual(primary["replay_per_class"], 18)
         self.assertEqual(
             self.matrix["datasets"]["multidomain8_atomic"]["role"],
@@ -120,6 +125,38 @@ class PaperMatrixTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--encoder-normalization") + 1],
             "group",
+        )
+
+    def test_signal_only_anchor_ablation_and_order_override(self) -> None:
+        job = next(
+            row
+            for row in self.matrix["p1_jobs"]
+            if row["id"] == "wo_text_semantics"
+        )
+        dataset = dict(self.matrix["datasets"]["multidomain8_disjoint18"])
+        order_id, domains = resolve_domain_order(dataset, "condition_major")
+        self.assertEqual(order_id, "condition_major")
+        self.assertEqual(domains[:6], [0, 6, 12, 1, 7, 13])
+        dataset["domain_order"] = domains
+        command = build_train_command(
+            python_bin="python",
+            dataset="multidomain8_disjoint18",
+            data_root=Path("data"),
+            text_cache=Path("cache"),
+            output_dir=Path("out"),
+            dataset_config=dataset,
+            job=job,
+            common=self.matrix["p1_common"],
+            seed=42,
+            device="cuda",
+        )
+        self.assertEqual(
+            command[command.index("--prototype-source") + 1],
+            "learned",
+        )
+        self.assertEqual(
+            command[command.index("--domains") + 1],
+            ",".join(str(value) for value in domains),
         )
 
     def test_p3_commands_preserve_seed_and_unlock_ablation(self) -> None:

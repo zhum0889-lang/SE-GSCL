@@ -33,6 +33,7 @@ from se_gscl.losses import global_prototype_alignment_loss, snapshot_probabiliti
 from se_gscl.models import SEGSCLSpecialist  # noqa: E402
 from se_gscl.semantics import (  # noqa: E402
     FrozenPrototypeBank,
+    LearnedPrototypeBank,
     ProjectedTextPrototypeBank,
     TextEmbeddingCache,
 )
@@ -98,6 +99,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step-size", type=int, default=1024)
     parser.add_argument("--max-windows-per-file", type=int, default=24)
     parser.add_argument("--semantic-dim", type=int, default=64)
+    parser.add_argument(
+        "--prototype-source",
+        choices=("text", "learned"),
+        default="text",
+        help=(
+            "Use projected frozen-LLM text anchors or signal-only class "
+            "anchors learned on the initial domain."
+        ),
+    )
     parser.add_argument("--num-tokens", type=int, default=16)
     parser.add_argument("--branch-dim", type=int, default=32)
     parser.add_argument(
@@ -455,14 +465,20 @@ def main() -> int:
         normalization=args.encoder_normalization,
         num_domains=len(domains),
     ).to(device)
-    projected_bank = ProjectedTextPrototypeBank(
-        text_cache,
-        semantic_dim=args.semantic_dim,
-    ).to(device)
+    if args.prototype_source == "text":
+        prototype_bank = ProjectedTextPrototypeBank(
+            text_cache,
+            semantic_dim=args.semantic_dim,
+        ).to(device)
+    else:
+        prototype_bank = LearnedPrototypeBank(
+            class_names,
+            semantic_dim=args.semantic_dim,
+        ).to(device)
     decorrelation_enabled = args.strategy == "full"
     initial_trainer = GlobalSemanticTrainer(
         model,
-        projected_bank,
+        prototype_bank,
         P1LossWeights(
             global_alignment=1.0,
             decorrelation=(
@@ -472,13 +488,13 @@ def main() -> int:
         device=device,
     )
     initial_optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(projected_bank.parameters()),
+        list(model.parameters()) + list(prototype_bank.parameters()),
         lr=args.learning_rate,
     )
     initial_trainable_parameters = sum(
         parameter.numel()
         for parameter in list(model.parameters())
-        + list(projected_bank.parameters())
+        + list(prototype_bank.parameters())
         if parameter.requires_grad
     )
     continual_trainable_parameters = sum(
@@ -504,11 +520,18 @@ def main() -> int:
             }
         )
 
-    frozen_bank = projected_bank.freeze("p1-after-initial-domain").to(device)
+    frozen_bank = prototype_bank.freeze(
+        f"p1-{args.prototype_source}-after-initial-domain"
+    ).to(device)
     torch.save(
-        projected_bank.state_dict(),
-        output_dir / "projected_text_bank.pt",
+        prototype_bank.state_dict(),
+        output_dir / "prototype_bank.pt",
     )
+    if args.prototype_source == "text":
+        torch.save(
+            prototype_bank.state_dict(),
+            output_dir / "projected_text_bank.pt",
+        )
     torch.save(frozen_bank.state_dict(), output_dir / "frozen_prototypes.pt")
     test_sets = {
         domain: _as_window_dataset(dataset)
@@ -782,11 +805,22 @@ def main() -> int:
         "strategy": args.strategy,
         "domains": domains,
         "class_names": class_names,
-        "text_model": text_cache.model_id,
-        "text_hidden_size": text_cache.hidden_size,
-        "text_pooling": text_cache.pooling,
-        "text_centering": "ontology_global_mean",
+        "text_model": (
+            text_cache.model_id if args.prototype_source == "text" else None
+        ),
+        "text_hidden_size": (
+            text_cache.hidden_size if args.prototype_source == "text" else None
+        ),
+        "text_pooling": (
+            text_cache.pooling if args.prototype_source == "text" else None
+        ),
+        "text_centering": (
+            "ontology_global_mean"
+            if args.prototype_source == "text"
+            else None
+        ),
         "semantic_dim": args.semantic_dim,
+        "prototype_source": args.prototype_source,
         "model_config": {
             "input_channels": input_channels,
             "token_dim": args.semantic_dim,
@@ -802,9 +836,17 @@ def main() -> int:
             "max_windows_per_file": args.max_windows_per_file,
         },
         "diagnostic_output": {
-            "type": "semantic_prototype_classification",
+            "type": (
+                "semantic_prototype_classification"
+                if args.prototype_source == "text"
+                else "learned_anchor_classification"
+            ),
             "producer": "lightweight_specialist",
-            "decision_rule": "argmax cosine similarity to frozen text prototypes",
+            "decision_rule": (
+                "argmax cosine similarity to frozen text prototypes"
+                if args.prototype_source == "text"
+                else "argmax cosine similarity to initial-domain learned anchors"
+            ),
             "llm_text_generation_enabled": False,
         },
         "training_config": {
@@ -830,7 +872,16 @@ def main() -> int:
                 ),
             },
             "seed": args.seed,
-            "projector_policy": "train_on_initial_domain_then_freeze",
+            "prototype_policy": (
+                "project_text_on_initial_domain_then_freeze"
+                if args.prototype_source == "text"
+                else "learn_signal_only_anchors_on_initial_domain_then_freeze"
+            ),
+            "projector_policy": (
+                "train_on_initial_domain_then_freeze"
+                if args.prototype_source == "text"
+                else "not_applicable"
+            ),
             "initial_trainable_parameters": initial_trainable_parameters,
             "continual_trainable_parameters": continual_trainable_parameters,
         },

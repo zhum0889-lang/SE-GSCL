@@ -38,3 +38,32 @@ class FrozenPrototypeBank(nn.Module):
                 f"Expected semantic dim {self.semantic_dim}, got {embeddings.shape[-1]}"
             )
         return F.normalize(embeddings, dim=-1) @ self.prototypes.T
+
+
+class LearnedPrototypeBank(nn.Module):
+    """Class anchors learned from the initial signal domain without text."""
+
+    def __init__(
+        self,
+        class_names: Sequence[str],
+        semantic_dim: int,
+    ) -> None:
+        super().__init__()
+        names = tuple(str(name) for name in class_names)
+        if not names:
+            raise ValueError("class_names must be non-empty.")
+        if semantic_dim <= 0:
+            raise ValueError("semantic_dim must be positive.")
+        self.class_names = names
+        self.values = nn.Parameter(torch.empty(len(names), semantic_dim))
+        nn.init.orthogonal_(self.values)
+
+    def forward(self) -> torch.Tensor:
+        return F.normalize(self.values, dim=-1)
+
+    @torch.no_grad()
+    def freeze(
+        self,
+        version: str = "learned-after-initial-domain",
+    ) -> FrozenPrototypeBank:
+        return FrozenPrototypeBank(self(), self.class_names, version)
