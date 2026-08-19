@@ -56,7 +56,12 @@ class LearnedPrototypeBank(nn.Module):
             raise ValueError("semantic_dim must be positive.")
         self.class_names = names
         self.values = nn.Parameter(torch.empty(len(names), semantic_dim))
-        nn.init.orthogonal_(self.values)
+        # A normalized Gaussian initialization keeps this ablation semantic-free
+        # and avoids the LAPACK-backed QR decomposition used by orthogonal_.
+        # Some cloud PyTorch builds intentionally omit CPU LAPACK support.
+        with torch.no_grad():
+            nn.init.normal_(self.values, mean=0.0, std=semantic_dim**-0.5)
+            self.values.copy_(F.normalize(self.values, dim=-1))
 
     def forward(self) -> torch.Tensor:
         return F.normalize(self.values, dim=-1)
