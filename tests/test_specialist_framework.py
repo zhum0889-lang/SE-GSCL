@@ -48,6 +48,7 @@ class SpecialistFrameworkTests(unittest.TestCase):
             temporal_dropout=0.1,
             normalization="group",
             num_domains=4,
+            num_classes=5,
             condition_dim=3,
         )
         output = model(torch.randn(5, 3, 2048))
@@ -56,6 +57,7 @@ class SpecialistFrameworkTests(unittest.TestCase):
         self.assertEqual(output.condition_tokens.shape, (5, 16, 64))
         self.assertEqual(output.fault_embedding.shape, (5, 64))
         self.assertEqual(output.condition_embedding.shape, (5, 64))
+        self.assertEqual(output.class_logits.shape, (5, 5))
         self.assertEqual(output.domain_logits.shape, (5, 4))
         self.assertEqual(output.condition_values.shape, (5, 3))
         self.assertEqual(len(model.encoder.branches), 2)

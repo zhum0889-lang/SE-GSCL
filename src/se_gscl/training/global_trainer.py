@@ -7,6 +7,7 @@ from typing import Protocol
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from se_gscl.losses import (
     cross_condition_supervised_contrastive_loss,
@@ -22,6 +23,7 @@ class PrototypeSource(Protocol):
 
 @dataclass(frozen=True)
 class P1LossWeights:
+    classification: float = 0.0
     global_alignment: float = 1.0
     cross_condition: float = 0.0
     decorrelation: float = 0.0
@@ -60,6 +62,7 @@ class GlobalSemanticTrainer:
         self.model.train()
         totals = {
             "loss": 0.0,
+            "classification": 0.0,
             "global_alignment": 0.0,
             "cross_condition": 0.0,
             "decorrelation": 0.0,
@@ -78,6 +81,15 @@ class GlobalSemanticTrainer:
                 labels,
                 temperature=self.temperature,
             )
+            classification = logits.sum() * 0.0
+            relation_logits = logits
+            if output.class_logits is not None:
+                classification = F.cross_entropy(output.class_logits, labels)
+                relation_logits = output.class_logits
+            elif self.weights.classification > 0.0:
+                raise RuntimeError(
+                    "Classification loss requires a specialist classifier head."
+                )
             cross_condition = cross_condition_supervised_contrastive_loss(
                 output.fault_embedding,
                 labels,
@@ -94,13 +106,14 @@ class GlobalSemanticTrainer:
                 if replay_mask is not None:
                     replay_mask = replay_mask.bool().to(self.device)
                 relation = global_relation_snapshot_loss(
-                    logits,
+                    relation_logits,
                     batch["snapshot_probs"].to(self.device),
                     replay_mask,
                     temperature=self.snapshot_temperature,
                 )
             loss = (
-                self.weights.global_alignment * alignment
+                self.weights.classification * classification
+                + self.weights.global_alignment * alignment
                 + self.weights.cross_condition * cross_condition
                 + self.weights.decorrelation * decorrelation
                 + self.weights.global_relation * relation
@@ -109,6 +122,7 @@ class GlobalSemanticTrainer:
             optimizer.step()
             values = {
                 "loss": loss,
+                "classification": classification,
                 "global_alignment": alignment,
                 "cross_condition": cross_condition,
                 "decorrelation": decorrelation,

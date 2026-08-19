@@ -108,6 +108,15 @@ def parse_args() -> argparse.Namespace:
             "anchors learned on the initial domain."
         ),
     )
+    parser.add_argument(
+        "--decision-source",
+        choices=("prototype", "classifier"),
+        default="prototype",
+        help=(
+            "Use semantic-prototype similarity or a learned discriminative "
+            "head for the final small-model decision."
+        ),
+    )
     parser.add_argument("--num-tokens", type=int, default=16)
     parser.add_argument("--branch-dim", type=int, default=32)
     parser.add_argument(
@@ -137,6 +146,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-cc", type=float, default=0.1)
     parser.add_argument("--lambda-dec", type=float, default=0.01)
     parser.add_argument("--lambda-rel", type=float, default=1.0)
+    parser.add_argument("--lambda-classification", type=float, default=0.0)
+    parser.add_argument("--lambda-semantic", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu")
     return parser.parse_args()
@@ -168,10 +179,12 @@ def _collect_outputs(
     dataset: WindowDataset,
     device: torch.device,
     batch_size: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    decision_source: str = "prototype",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
     predictions: list[torch.Tensor] = []
     probabilities: list[torch.Tensor] = []
+    semantic_probabilities: list[torch.Tensor] = []
     embeddings: list[torch.Tensor] = []
     for batch in DataLoader(dataset, batch_size=batch_size, shuffle=False):
         output = model(batch["x"].to(device))
@@ -180,13 +193,22 @@ def _collect_outputs(
             prototypes.to(device),
             batch["label"].to(device),
         )
-        predictions.append(logits.argmax(dim=1).cpu())
-        probabilities.append(snapshot_probabilities(logits).cpu())
+        decision_logits = logits
+        if decision_source == "classifier":
+            if output.class_logits is None:
+                raise RuntimeError(
+                    "Classifier decisions require a specialist classifier head."
+                )
+            decision_logits = output.class_logits
+        predictions.append(decision_logits.argmax(dim=1).cpu())
+        probabilities.append(snapshot_probabilities(decision_logits).cpu())
+        semantic_probabilities.append(snapshot_probabilities(logits).cpu())
         embeddings.append(output.fault_embedding.cpu())
     return (
         torch.cat(predictions).numpy(),
         torch.cat(probabilities).numpy(),
         torch.cat(embeddings).numpy(),
+        torch.cat(semantic_probabilities).numpy(),
     )
 
 
@@ -196,13 +218,15 @@ def _predict(
     dataset: WindowDataset,
     device: torch.device,
     batch_size: int,
+    decision_source: str = "prototype",
 ) -> tuple[np.ndarray, np.ndarray]:
-    predictions, probabilities, _ = _collect_outputs(
+    predictions, probabilities, _, _ = _collect_outputs(
         model,
         prototypes,
         dataset,
         device,
         batch_size,
+        decision_source,
     )
     return predictions, probabilities
 
@@ -217,26 +241,30 @@ def _save_stage_outputs(
     class_names: tuple[str, ...],
     device: torch.device,
     batch_size: int,
+    decision_source: str = "prototype",
 ) -> None:
     """Persist sample-level outputs needed for paper-facing diagnostics."""
 
     predictions: list[np.ndarray] = []
     probabilities: list[np.ndarray] = []
+    semantic_probabilities: list[np.ndarray] = []
     embeddings: list[np.ndarray] = []
     labels: list[np.ndarray] = []
     sample_ids: list[np.ndarray] = []
     sample_domains: list[np.ndarray] = []
     for domain in domains:
         dataset = test_sets[domain]
-        pred, prob, embedding = _collect_outputs(
+        pred, prob, embedding, semantic_prob = _collect_outputs(
             model,
             prototypes,
             dataset,
             device,
             batch_size,
+            decision_source,
         )
         predictions.append(pred)
         probabilities.append(prob)
+        semantic_probabilities.append(semantic_prob)
         embeddings.append(embedding)
         labels.append(dataset.labels.numpy())
         sample_ids.append(dataset.sample_ids.numpy())
@@ -245,6 +273,7 @@ def _save_stage_outputs(
         output_dir / f"stage_outputs_after_domain_{trained_domain}.npz",
         predictions=np.concatenate(predictions),
         probabilities=np.concatenate(probabilities),
+        semantic_probabilities=np.concatenate(semantic_probabilities),
         embeddings=np.concatenate(embeddings),
         labels=np.concatenate(labels),
         sample_ids=np.concatenate(sample_ids),
@@ -261,8 +290,16 @@ def _accuracy(
     dataset: WindowDataset,
     device: torch.device,
     batch_size: int,
+    decision_source: str = "prototype",
 ) -> dict[str, object]:
-    predictions, _ = _predict(model, prototypes, dataset, device, batch_size)
+    predictions, _ = _predict(
+        model,
+        prototypes,
+        dataset,
+        device,
+        batch_size,
+        decision_source,
+    )
     labels = dataset.labels.numpy()
     per_class = {
         str(label): float(np.mean(predictions[labels == label] == label))
@@ -358,6 +395,7 @@ def _evaluate_all_domains(
     domains: list[int],
     device: torch.device,
     batch_size: int,
+    decision_source: str = "prototype",
 ) -> dict[str, dict[str, object]]:
     return {
         str(domain): _accuracy(
@@ -366,6 +404,7 @@ def _evaluate_all_domains(
             test_sets[domain],
             device,
             batch_size,
+            decision_source,
         )
         for domain in domains
     }
@@ -413,6 +452,12 @@ def main() -> int:
         raise ValueError("encoder_dilations must contain positive integers.")
     if not 0.0 <= args.encoder_dropout < 1.0:
         raise ValueError("encoder_dropout must be in [0, 1).")
+    if args.lambda_classification < 0.0 or args.lambda_semantic < 0.0:
+        raise ValueError("Loss weights must be non-negative.")
+    if args.decision_source == "classifier" and args.lambda_classification <= 0.0:
+        raise ValueError(
+            "Classifier decisions require a positive --lambda-classification."
+        )
     _set_seed(args.seed)
     domains = [int(value) for value in args.domains.split(",") if value.strip()]
     if len(domains) < 2:
@@ -464,6 +509,9 @@ def main() -> int:
         temporal_dropout=args.encoder_dropout,
         normalization=args.encoder_normalization,
         num_domains=len(domains),
+        num_classes=(
+            len(class_names) if args.decision_source == "classifier" else None
+        ),
     ).to(device)
     if args.prototype_source == "text":
         prototype_bank = ProjectedTextPrototypeBank(
@@ -480,7 +528,8 @@ def main() -> int:
         model,
         prototype_bank,
         P1LossWeights(
-            global_alignment=1.0,
+            classification=args.lambda_classification,
+            global_alignment=args.lambda_semantic,
             decorrelation=(
                 args.lambda_dec if decorrelation_enabled else 0.0
             ),
@@ -544,6 +593,7 @@ def main() -> int:
         domains,
         device,
         args.batch_size,
+        args.decision_source,
     )
     stage_metrics: list[dict[str, object]] = [
         {
@@ -562,6 +612,7 @@ def main() -> int:
         class_names,
         device,
         args.batch_size,
+        args.decision_source,
     )
     torch.save(model.state_dict(), output_dir / f"specialist_after_domain_{domains[0]}.pt")
 
@@ -589,6 +640,7 @@ def main() -> int:
                     current,
                     device,
                     args.batch_size,
+                    args.decision_source,
                 )
                 continual_train = WindowDataset(
                     current.x.numpy(),
@@ -619,6 +671,7 @@ def main() -> int:
                     memory,
                     device,
                     args.batch_size,
+                    args.decision_source,
                 )
                 snapshot = GlobalRelationSnapshot(
                     memory.sample_ids,
@@ -670,7 +723,8 @@ def main() -> int:
             model,
             frozen_bank.prototypes,
             P1LossWeights(
-                global_alignment=1.0,
+                classification=args.lambda_classification,
+                global_alignment=args.lambda_semantic,
                 cross_condition=(
                     args.lambda_cc if cross_condition_enabled else 0.0
                 ),
@@ -717,6 +771,7 @@ def main() -> int:
             domains,
             device,
             args.batch_size,
+            args.decision_source,
         )
         stage_metrics.append(
             {
@@ -735,6 +790,7 @@ def main() -> int:
             class_names,
             device,
             args.batch_size,
+            args.decision_source,
         )
         if memory is not None:
             memory_candidates = _concatenate_datasets(memory, current)
@@ -799,6 +855,32 @@ def main() -> int:
             - final_metrics[old_domain]["balanced_accuracy"]
         ),
     }
+    final_output_path = (
+        output_dir / f"stage_outputs_after_domain_{domains[-1]}.npz"
+    )
+    with np.load(final_output_path) as final_outputs:
+        final_labels = np.asarray(final_outputs["labels"], dtype=np.int64)
+        decision_predictions = np.asarray(
+            final_outputs["predictions"], dtype=np.int64
+        )
+        semantic_predictions = np.asarray(
+            final_outputs["semantic_probabilities"]
+        ).argmax(axis=1)
+    decision_correct = decision_predictions == final_labels
+    semantic_correct = semantic_predictions == final_labels
+    semantic_interface_audit = {
+        "decision_semantic_agreement_rate": float(
+            np.mean(decision_predictions == semantic_predictions)
+        ),
+        "semantic_prototype_accuracy": float(np.mean(semantic_correct)),
+        "decision_accuracy": float(np.mean(decision_correct)),
+        "decision_correction_rate": float(
+            np.mean(decision_correct & ~semantic_correct)
+        ),
+        "decision_corruption_rate": float(
+            np.mean(~decision_correct & semantic_correct)
+        ),
+    }
     report = {
         "status": "ok",
         "dataset": args.dataset,
@@ -821,6 +903,7 @@ def main() -> int:
         ),
         "semantic_dim": args.semantic_dim,
         "prototype_source": args.prototype_source,
+        "decision_source": args.decision_source,
         "model_config": {
             "input_channels": input_channels,
             "token_dim": args.semantic_dim,
@@ -831,22 +914,39 @@ def main() -> int:
             "encoder_dropout": args.encoder_dropout,
             "encoder_normalization": args.encoder_normalization,
             "num_domains": len(domains),
+            "num_classes": (
+                len(class_names) if args.decision_source == "classifier" else 0
+            ),
             "window_size": args.window_size,
             "step_size": args.step_size,
             "max_windows_per_file": args.max_windows_per_file,
         },
         "diagnostic_output": {
             "type": (
-                "semantic_prototype_classification"
-                if args.prototype_source == "text"
-                else "learned_anchor_classification"
+                "decoupled_classifier_with_semantic_interface"
+                if args.decision_source == "classifier"
+                else (
+                    "semantic_prototype_classification"
+                    if args.prototype_source == "text"
+                    else "learned_anchor_classification"
+                )
             ),
             "producer": "lightweight_specialist",
             "decision_rule": (
-                "argmax cosine similarity to frozen text prototypes"
-                if args.prototype_source == "text"
-                else "argmax cosine similarity to initial-domain learned anchors"
+                "argmax learned classifier logits"
+                if args.decision_source == "classifier"
+                else (
+                    "argmax cosine similarity to frozen text prototypes"
+                    if args.prototype_source == "text"
+                    else "argmax cosine similarity to initial-domain learned anchors"
+                )
             ),
+            "semantic_interface": (
+                "cosine similarity to frozen projected text prototypes"
+                if args.prototype_source == "text"
+                else None
+            ),
+            "semantic_interface_audit": semantic_interface_audit,
             "llm_text_generation_enabled": False,
         },
         "training_config": {
@@ -857,8 +957,11 @@ def main() -> int:
             "lambda_cross_condition": args.lambda_cc,
             "lambda_decorrelation": args.lambda_dec,
             "lambda_global_relation": args.lambda_rel,
+            "lambda_classification": args.lambda_classification,
+            "lambda_semantic": args.lambda_semantic,
             "effective_continual_loss_weights": {
-                "global_alignment": 1.0,
+                "classification": args.lambda_classification,
+                "global_alignment": args.lambda_semantic,
                 "cross_condition": (
                     args.lambda_cc if args.strategy == "full" else 0.0
                 ),

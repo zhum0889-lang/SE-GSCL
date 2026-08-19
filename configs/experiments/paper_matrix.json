@@ -87,13 +87,16 @@
     "encoder_dropout": 0.0,
     "encoder_normalization": "batch",
     "prototype_source": "text",
+    "decision_source": "prototype",
     "batch_size": 64,
     "initial_epochs": 20,
     "continual_epochs": 20,
     "learning_rate": 0.001,
     "lambda_cc": 0.1,
     "lambda_dec": 0.001,
-    "lambda_rel": 1.0
+    "lambda_rel": 1.0,
+    "lambda_classification": 0.0,
+    "lambda_semantic": 1.0
   },
   "p1_jobs": [
     {
@@ -127,6 +130,17 @@
       "label": "SE-GSCL with initial-domain learned anchors",
       "overrides": {
         "prototype_source": "learned"
+      }
+    },
+    {
+      "id": "se_gscl_decoupled",
+      "group": "architecture_candidate",
+      "strategy": "full",
+      "label": "SE-GSCL with decoupled semantic and decision objectives",
+      "overrides": {
+        "decision_source": "classifier",
+        "lambda_classification": 1.0,
+        "lambda_semantic": 0.2
       }
     },
     {

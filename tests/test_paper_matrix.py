@@ -159,6 +159,37 @@ class PaperMatrixTests(unittest.TestCase):
             ",".join(str(value) for value in domains),
         )
 
+    def test_decoupled_semantic_decision_candidate(self) -> None:
+        job = next(
+            row
+            for row in self.matrix["p1_jobs"]
+            if row["id"] == "se_gscl_decoupled"
+        )
+        command = build_train_command(
+            python_bin="python",
+            dataset="multidomain8_disjoint18",
+            data_root=Path("data"),
+            text_cache=Path("cache"),
+            output_dir=Path("out"),
+            dataset_config=self.matrix["datasets"]["multidomain8_disjoint18"],
+            job=job,
+            common=self.matrix["p1_common"],
+            seed=42,
+            device="cuda",
+        )
+        self.assertEqual(
+            command[command.index("--decision-source") + 1],
+            "classifier",
+        )
+        self.assertEqual(
+            command[command.index("--lambda-classification") + 1],
+            "1.0",
+        )
+        self.assertEqual(
+            command[command.index("--lambda-semantic") + 1],
+            "0.2",
+        )
+
     def test_p3_commands_preserve_seed_and_unlock_ablation(self) -> None:
         continuous = next(
             row

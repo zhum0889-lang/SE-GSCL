@@ -18,6 +18,7 @@ class SpecialistOutput:
     condition_tokens: torch.Tensor
     fault_embedding: torch.Tensor
     condition_embedding: torch.Tensor
+    class_logits: torch.Tensor | None
     domain_logits: torch.Tensor | None
     condition_values: torch.Tensor | None
 
@@ -48,6 +49,7 @@ class SEGSCLSpecialist(nn.Module):
         temporal_dropout: float = 0.0,
         normalization: str = "batch",
         num_domains: int | None = None,
+        num_classes: int | None = None,
         condition_dim: int = 0,
     ) -> None:
         super().__init__()
@@ -63,6 +65,11 @@ class SEGSCLSpecialist(nn.Module):
         )
         self.fault_branch = _TokenBranch(token_dim)
         self.condition_branch = _TokenBranch(token_dim)
+        self.classifier_head = (
+            nn.Linear(token_dim, int(num_classes))
+            if num_classes is not None and num_classes > 0
+            else None
+        )
         self.domain_head = (
             nn.Linear(token_dim, int(num_domains))
             if num_domains is not None and num_domains > 0
@@ -84,6 +91,11 @@ class SEGSCLSpecialist(nn.Module):
             condition_tokens=condition_tokens,
             fault_embedding=fault_embedding,
             condition_embedding=condition_embedding,
+            class_logits=(
+                None
+                if self.classifier_head is None
+                else self.classifier_head(fault_embedding)
+            ),
             domain_logits=(
                 None if self.domain_head is None else self.domain_head(condition_embedding)
             ),
