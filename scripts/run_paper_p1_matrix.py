@@ -402,16 +402,29 @@ def main() -> int:
                 encoding="utf-8",
             )
             print(f"RUN {args.dataset} seed={seed} job={job['id']}")
-            with (output_dir / "run.log").open(
+            log_path = output_dir / "run.log"
+            with log_path.open(
                 "w",
                 encoding="utf-8",
             ) as log:
-                subprocess.run(
+                result = subprocess.run(
                     command,
                     cwd=ROOT,
                     stdout=log,
                     stderr=subprocess.STDOUT,
-                    check=True,
+                    check=False,
+                )
+            if result.returncode != 0:
+                lines = log_path.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                ).splitlines()
+                tail = "\n".join(lines[-60:])
+                raise RuntimeError(
+                    f"P1 job failed: dataset={args.dataset}, seed={seed}, "
+                    f"job={job['id']}, exit_code={result.returncode}.\n"
+                    f"Full log: {log_path.resolve()}\n"
+                    f"Last {min(60, len(lines))} log lines:\n{tail}"
                 )
             if not report_path.is_file():
                 raise RuntimeError(
