@@ -190,6 +190,41 @@ class PaperMatrixTests(unittest.TestCase):
             "0.2",
         )
 
+    def test_semantic_decoupling_mechanism_ablations(self) -> None:
+        jobs = {
+            row["id"]: row
+            for row in self.matrix["p1_jobs"]
+        }
+        expected = {
+            "se_gscl_semantic_reweighted": ("prototype", "0.0", "0.2"),
+            "se_gscl_discriminative_only": ("classifier", "1.0", "0.0"),
+        }
+        for job_id, values in expected.items():
+            command = build_train_command(
+                python_bin="python",
+                dataset="multidomain8_disjoint18",
+                data_root=Path("data"),
+                text_cache=Path("cache"),
+                output_dir=Path("out"),
+                dataset_config=self.matrix["datasets"][
+                    "multidomain8_disjoint18"
+                ],
+                job=jobs[job_id],
+                common=self.matrix["p1_common"],
+                seed=42,
+                device="cuda",
+            )
+            self.assertEqual(
+                command[command.index("--decision-source") + 1], values[0]
+            )
+            self.assertEqual(
+                command[command.index("--lambda-classification") + 1],
+                values[1],
+            )
+            self.assertEqual(
+                command[command.index("--lambda-semantic") + 1], values[2]
+            )
+
     def test_p3_commands_preserve_seed_and_unlock_ablation(self) -> None:
         continuous = next(
             row

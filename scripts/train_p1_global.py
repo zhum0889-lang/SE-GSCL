@@ -868,18 +868,42 @@ def main() -> int:
         ).argmax(axis=1)
     decision_correct = decision_predictions == final_labels
     semantic_correct = semantic_predictions == final_labels
+    decision_class_recall = [
+        float(np.mean(decision_correct[final_labels == class_id]))
+        for class_id in range(len(class_names))
+    ]
+    semantic_class_recall = [
+        float(np.mean(semantic_correct[final_labels == class_id]))
+        for class_id in range(len(class_names))
+    ]
     semantic_interface_audit = {
         "decision_semantic_agreement_rate": float(
             np.mean(decision_predictions == semantic_predictions)
         ),
         "semantic_prototype_accuracy": float(np.mean(semantic_correct)),
+        "semantic_prototype_balanced_accuracy": float(
+            np.mean(semantic_class_recall)
+        ),
         "decision_accuracy": float(np.mean(decision_correct)),
+        "decision_balanced_accuracy": float(np.mean(decision_class_recall)),
         "decision_correction_rate": float(
             np.mean(decision_correct & ~semantic_correct)
         ),
         "decision_corruption_rate": float(
             np.mean(~decision_correct & semantic_correct)
         ),
+        "net_decision_correction_rate": float(
+            np.mean(decision_correct & ~semantic_correct)
+            - np.mean(~decision_correct & semantic_correct)
+        ),
+        "semantic_prototype_class_recall": {
+            name: value
+            for name, value in zip(class_names, semantic_class_recall)
+        },
+        "decision_class_recall": {
+            name: value
+            for name, value in zip(class_names, decision_class_recall)
+        },
     }
     report = {
         "status": "ok",

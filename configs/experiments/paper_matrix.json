@@ -144,6 +144,28 @@
       }
     },
     {
+      "id": "se_gscl_semantic_reweighted",
+      "group": "mechanism_ablation",
+      "strategy": "full",
+      "label": "SE-GSCL semantic-only with matched semantic weight",
+      "overrides": {
+        "decision_source": "prototype",
+        "lambda_classification": 0.0,
+        "lambda_semantic": 0.2
+      }
+    },
+    {
+      "id": "se_gscl_discriminative_only",
+      "group": "mechanism_ablation",
+      "strategy": "full",
+      "label": "SE-GSCL discriminative head without semantic alignment",
+      "overrides": {
+        "decision_source": "classifier",
+        "lambda_classification": 1.0,
+        "lambda_semantic": 0.0
+      }
+    },
+    {
       "id": "se_gscl_temporal",
       "group": "architecture_candidate",
       "strategy": "full",
